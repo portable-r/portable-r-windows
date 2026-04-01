@@ -1,0 +1,166 @@
+name: Build Portable R for Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      r_version:
+        description: 'R version to build (e.g., 4.5.3)'
+        required: true
+        default: '4.5.3'
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: build-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      r_version: ${{ steps.resolve.outputs.r_version }}
+      matrix: ${{ steps.resolve.outputs.matrix }}
+    steps:
+      - id: resolve
+        run: |
+          if [ -n "${{ github.event.inputs.r_version }}" ]; then
+            V="${{ github.event.inputs.r_version }}"
+          else
+            V="${{ github.ref_name }}"
+            V="${V#v}"
+          fi
+          echo "r_version=$V" >> $GITHUB_OUTPUT
+
+          # ARM64 builds available for 4.4.0 through 4.5.2
+          AARCH64_VERSIONS="4.4.0 4.4.1 4.4.2 4.4.3 4.5.0 4.5.1 4.5.2"
+          MATRIX='[{"arch":"x64","runner":"windows-latest"}'
+          if echo "$AARCH64_VERSIONS" | grep -qw "$V"; then
+            MATRIX="${MATRIX},{\"arch\":\"aarch64\",\"runner\":\"windows-11-arm\"}"
+          fi
+          MATRIX="${MATRIX}]"
+          echo "matrix={\"include\":$MATRIX}" >> $GITHUB_OUTPUT
+          echo "Building R $V: $MATRIX"
+
+  build:
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build portable R
+        id: build
+        shell: pwsh
+        run: |
+          .\build.ps1 -RVersion "${{ needs.prepare.outputs.r_version }}" -Architecture "${{ matrix.arch }}"
+
+      - name: Test portable R
+        shell: pwsh
+        run: |
+          .\tests\run-tests.ps1 "portable-r-${{ needs.prepare.outputs.r_version }}-win-${{ matrix.arch }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: portable-r-${{ needs.prepare.outputs.r_version }}-win-${{ matrix.arch }}
+          path: |
+            portable-r-*-win-${{ matrix.arch }}.zip
+            portable-r-*-win-${{ matrix.arch }}.zip.sha256
+
+  release:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download x64 artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: portable-r-${{ needs.prepare.outputs.r_version }}-win-x64
+          path: artifacts/
+
+      - name: Download aarch64 artifact
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: portable-r-${{ needs.prepare.outputs.r_version }}-win-aarch64
+          path: artifacts/
+
+      - name: Generate release body
+        run: |
+          V="${{ needs.prepare.outputs.r_version }}"
+          HAS_ARM64=false
+          if [ -f "artifacts/portable-r-${V}-win-aarch64.zip" ]; then
+            HAS_ARM64=true
+          fi
+
+          X64_SHA=$(cut -d' ' -f1 "artifacts/portable-r-${V}-win-x64.zip.sha256" 2>/dev/null || echo "n/a")
+          if [ "$HAS_ARM64" = "true" ]; then
+            ARM_SHA=$(cut -d' ' -f1 "artifacts/portable-r-${V}-win-aarch64.zip.sha256" 2>/dev/null || echo "n/a")
+          fi
+
+          {
+            echo "## Portable R ${V} for Windows"
+            echo ""
+            echo "### Downloads"
+            echo "| Architecture | File | SHA256 |"
+            echo "|-------------|------|--------|"
+            echo "| Windows x64 | \`portable-r-${V}-win-x64.zip\` | \`${X64_SHA}\` |"
+            if [ "$HAS_ARM64" = "true" ]; then
+              echo "| Windows ARM64 | \`portable-r-${V}-win-aarch64.zip\` | \`${ARM_SHA}\` |"
+            fi
+            echo ""
+            echo "### Quick Install"
+            echo ""
+            echo "**x64**"
+            echo ""
+            echo "PowerShell:"
+            echo "\`\`\`powershell"
+            echo "Invoke-WebRequest -Uri \"https://github.com/portable-r/portable-r-windows/releases/download/v${V}/portable-r-${V}-win-x64.zip\" -OutFile portable-r.zip"
+            echo "Expand-Archive portable-r.zip -DestinationPath ."
+            echo "\`\`\`"
+            echo ""
+            echo "curl:"
+            echo "\`\`\`cmd"
+            echo "curl -fSLO https://github.com/portable-r/portable-r-windows/releases/download/v${V}/portable-r-${V}-win-x64.zip"
+            echo "tar -xf portable-r-${V}-win-x64.zip"
+            echo "\`\`\`"
+            if [ "$HAS_ARM64" = "true" ]; then
+              echo ""
+              echo "**ARM64**"
+              echo ""
+              echo "PowerShell:"
+              echo "\`\`\`powershell"
+              echo "Invoke-WebRequest -Uri \"https://github.com/portable-r/portable-r-windows/releases/download/v${V}/portable-r-${V}-win-aarch64.zip\" -OutFile portable-r.zip"
+              echo "Expand-Archive portable-r.zip -DestinationPath ."
+              echo "\`\`\`"
+              echo ""
+              echo "curl:"
+              echo "\`\`\`cmd"
+              echo "curl -fSLO https://github.com/portable-r/portable-r-windows/releases/download/v${V}/portable-r-${V}-win-aarch64.zip"
+              echo "tar -xf portable-r-${V}-win-aarch64.zip"
+              echo "\`\`\`"
+              echo ""
+              echo "> **Note:** CRAN does not yet distribute binary R packages for Windows ARM64."
+              echo "> Packages must be installed from source (\`type = \"source\"\`) or run under x64 emulation."
+            fi
+            echo ""
+            echo "### Usage"
+            echo "\`\`\`cmd"
+            echo "portable-r-${V}-win-x64\\bin\\Rscript.exe my_script.R"
+            echo "\`\`\`"
+            echo "No installation required. Packages install to the local \`library\\\` directory."
+          } > release-body.md
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.prepare.outputs.r_version }}
+          name: R ${{ needs.prepare.outputs.r_version }}
+          files: artifacts/*
+          body_path: release-body.md

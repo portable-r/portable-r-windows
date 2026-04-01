@@ -1,0 +1,5 @@
+# Build artifacts
+portable-r-*/
+*.exe
+*.zip
+*.sha256
