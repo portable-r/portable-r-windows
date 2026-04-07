@@ -6,24 +6,21 @@ An **R + Rtools** variant is also available, bundling the full [Rtools](https://
 
 ## Quick Install
 
-**R only** (`.zip`, extractable natively on Windows)
+**R only** (`.zip`, works in PowerShell or Command Prompt)
 
-```powershell
-Invoke-WebRequest -Uri "https://github.com/portable-r/portable-r-windows/releases/download/v4.5.3/portable-r-4.5.3-win-x64.zip" -OutFile portable-r.zip
-Expand-Archive portable-r.zip -DestinationPath .
+```
+curl.exe -fSLO https://github.com/portable-r/portable-r-windows/releases/download/v4.5.3/portable-r-4.5.3-win-x64.zip
+tar -xf portable-r-4.5.3-win-x64.zip
 ```
 
-**R + Rtools** (`.7z`, requires [7-Zip](https://7-zip.org/) to extract)
+**R + Rtools** (`.7z`, requires [7-Zip](https://7-zip.org/))
 
-```powershell
-# Install 7-Zip if needed: winget install 7zip.7zip
+```
 curl.exe -fSLO https://github.com/portable-r/portable-r-windows/releases/download/v4.5.3/portable-r-4.5.3-win-x64-full.7z
 & "$env:ProgramFiles\7-Zip\7z.exe" x portable-r-4.5.3-win-x64-full.7z
 ```
 
-> `$env:ProgramFiles` expands to `C:\Program Files`. This works even when 7-Zip is not on PATH.
-
-The R + Rtools variant is distributed as `.7z` rather than `.zip` because the bundled toolchain (~3.5 GB uncompressed) exceeds GitHub's 2 GB release asset limit with zip compression. LZMA2 compression brings it down to ~850 MB.
+> Install 7-Zip if needed: `winget install 7zip.7zip`. The `$env:ProgramFiles` expands to `C:\Program Files`, so this works even when 7-Zip is not on PATH. The R + Rtools variant uses `.7z` (~850 MB) because the bundled toolchain (~3.5 GB uncompressed) exceeds GitHub's 2 GB release asset limit under zip compression.
 
 Replace `4.5.3` with your desired version. See [all releases](https://github.com/portable-r/portable-r-windows/releases).
 
