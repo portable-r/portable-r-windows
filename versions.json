@@ -1,0 +1,54 @@
+{
+  "r": {
+    "x64": [
+      "4.3.0", "4.3.1", "4.3.2", "4.3.3",
+      "4.4.0", "4.4.1", "4.4.2", "4.4.3",
+      "4.5.0", "4.5.1", "4.5.2", "4.5.3"
+    ],
+    "aarch64": [
+      "4.4.0", "4.4.1", "4.4.2", "4.4.3",
+      "4.5.0", "4.5.1", "4.5.2"
+    ],
+    "urls": {
+      "x64": "https://cloud.r-project.org/bin/windows/base",
+      "aarch64": "https://www.r-project.org/nosvn/winutf8/aarch64/R-4-signed"
+    }
+  },
+  "rtools": {
+    "43": {
+      "x64": {
+        "file": "rtools43-5976-5975.exe",
+        "url": "https://cran.r-project.org/bin/windows/Rtools/rtools43/files"
+      },
+      "aarch64": {
+        "file": "rtools43-aarch64-5958-5975.exe",
+        "url": "https://www.r-project.org/nosvn/winutf8/rtools43-aarch64"
+      }
+    },
+    "44": {
+      "x64": {
+        "file": "rtools44-6459-6401.exe",
+        "url": "https://cran.r-project.org/bin/windows/Rtools/rtools44/files"
+      },
+      "aarch64": {
+        "file": "rtools44-aarch64-6459-6401.exe",
+        "url": "https://cran.r-project.org/bin/windows/Rtools/rtools44/files"
+      }
+    },
+    "45": {
+      "x64": {
+        "file": "rtools45-6768-6492.exe",
+        "url": "https://cran.r-project.org/bin/windows/Rtools/rtools45/files"
+      },
+      "aarch64": {
+        "file": "rtools45-aarch64-6768-6492.exe",
+        "url": "https://cran.r-project.org/bin/windows/Rtools/rtools45/files"
+      }
+    },
+    "r_series": {
+      "4.3": "43",
+      "4.4": "44",
+      "4.5": "45"
+    }
+  }
+}

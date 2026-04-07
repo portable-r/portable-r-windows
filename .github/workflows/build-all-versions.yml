@@ -3,174 +3,129 @@ name: Build All R Versions
 on:
   workflow_dispatch:
     inputs:
-      versions:
-        description: 'Comma-separated R versions (or "all" for 4.3.0-4.5.3)'
-        required: false
-        default: 'all'
+      include_rtools:
+        description: 'Also build R+Rtools bundles'
+        type: boolean
+        default: false
       dry_run:
-        description: 'Dry run: build and test but do not create releases'
+        description: 'Dry run (build but skip release)'
         type: boolean
         default: false
 
+concurrency:
+  group: build-all
+  cancel-in-progress: false
+
 jobs:
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-    steps:
-      - id: set-matrix
-        run: |
-          INPUT="${{ github.event.inputs.versions }}"
-          if [ "$INPUT" = "all" ] || [ -z "$INPUT" ]; then
-            VERSIONS='["4.3.0","4.3.1","4.3.2","4.3.3","4.4.0","4.4.1","4.4.2","4.4.3","4.5.0","4.5.1","4.5.2","4.5.3"]'
-          else
-            VERSIONS=$(echo "$INPUT" | jq -R 'split(",") | map(gsub("\\s";""))')
-          fi
-          echo "matrix={\"r_version\":$VERSIONS}" >> $GITHUB_OUTPUT
-          echo "Building versions: $VERSIONS"
+  # ── R 4.3.x ─────────────────────────────────────────────────────────────
 
-  build:
-    needs: prepare
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [x64, aarch64]
-        r_version: ${{ fromJson(needs.prepare.outputs.matrix).r_version }}
-        include:
-          - arch: x64
-            runner: windows-latest
-          - arch: aarch64
-            runner: windows-11-arm
-        # ARM64 builds only available for 4.4.0 through 4.5.2
-        exclude:
-          - arch: aarch64
-            r_version: "4.3.0"
-          - arch: aarch64
-            r_version: "4.3.1"
-          - arch: aarch64
-            r_version: "4.3.2"
-          - arch: aarch64
-            r_version: "4.3.3"
-          - arch: aarch64
-            r_version: "4.5.3"
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Build portable R ${{ matrix.r_version }} (${{ matrix.arch }})
-        shell: pwsh
-        run: |
-          .\build.ps1 -RVersion "${{ matrix.r_version }}" -Architecture "${{ matrix.arch }}"
-
-      - name: Test portable R ${{ matrix.r_version }} (${{ matrix.arch }})
-        shell: pwsh
-        run: |
-          .\tests\run-tests.ps1 "portable-r-${{ matrix.r_version }}-win-${{ matrix.arch }}"
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: portable-r-${{ matrix.r_version }}-win-${{ matrix.arch }}
-          path: |
-            portable-r-*-win-${{ matrix.arch }}.zip
-            portable-r-*-win-${{ matrix.arch }}.zip.sha256
-
-  release:
-    needs: [prepare, build]
-    if: ${{ github.event.inputs.dry_run != 'true' }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        r_version: ${{ fromJson(needs.prepare.outputs.matrix).r_version }}
+  build-4_3_0:
+    uses: ./.github/workflows/build-portable-r.yml
+    with:
+      r_version: '4.3.0'
+      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
     permissions:
       contents: write
 
-    steps:
-      - name: Download x64 artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: portable-r-${{ matrix.r_version }}-win-x64
-          path: artifacts/
+  build-4_3_1:
+    needs: build-4_3_0
+    uses: ./.github/workflows/build-portable-r.yml
+    with:
+      r_version: '4.3.1'
+      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
+    permissions:
+      contents: write
 
-      - name: Download aarch64 artifact
-        uses: actions/download-artifact@v8
-        continue-on-error: true
-        with:
-          name: portable-r-${{ matrix.r_version }}-win-aarch64
-          path: artifacts/
+  build-4_3_2:
+    needs: build-4_3_1
+    uses: ./.github/workflows/build-portable-r.yml
+    with:
+      r_version: '4.3.2'
+      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
+    permissions:
+      contents: write
 
-      - name: Generate release body
-        run: |
-          V="${{ matrix.r_version }}"
-          HAS_ARM64=false
-          if [ -f "artifacts/portable-r-${V}-win-aarch64.zip" ]; then
-            HAS_ARM64=true
-          fi
+  build-4_3_3:
+    needs: build-4_3_2
+    uses: ./.github/workflows/build-portable-r.yml
+    with:
+      r_version: '4.3.3'
+      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
+    permissions:
+      contents: write
 
-          X64_SHA=$(cut -d' ' -f1 "artifacts/portable-r-${V}-win-x64.zip.sha256" 2>/dev/null || echo "n/a")
-          if [ "$HAS_ARM64" = "true" ]; then
-            ARM_SHA=$(cut -d' ' -f1 "artifacts/portable-r-${V}-win-aarch64.zip.sha256" 2>/dev/null || echo "n/a")
-          fi
+  # ── R 4.4.x ─────────────────────────────────────────────────────────────
 
-          {
-            echo "## Portable R ${V} for Windows"
-            echo ""
-            echo "### Downloads"
-            echo "| Architecture | File | SHA256 |"
-            echo "|-------------|------|--------|"
-            echo "| Windows x64 | \`portable-r-${V}-win-x64.zip\` | \`${X64_SHA}\` |"
-            if [ "$HAS_ARM64" = "true" ]; then
-              echo "| Windows ARM64 | \`portable-r-${V}-win-aarch64.zip\` | \`${ARM_SHA}\` |"
-            fi
-            echo ""
-            echo "### Quick Install"
-            echo ""
-            echo "**x64**"
-            echo ""
-            echo "PowerShell:"
-            echo "\`\`\`powershell"
-            echo "Invoke-WebRequest -Uri \"https://github.com/portable-r/portable-r-windows/releases/download/v${V}/portable-r-${V}-win-x64.zip\" -OutFile portable-r.zip"
-            echo "Expand-Archive portable-r.zip -DestinationPath ."
-            echo "\`\`\`"
-            echo ""
-            echo "curl:"
-            echo "\`\`\`cmd"
-            echo "curl -fSLO https://github.com/portable-r/portable-r-windows/releases/download/v${V}/portable-r-${V}-win-x64.zip"
-            echo "tar -xf portable-r-${V}-win-x64.zip"
-            echo "\`\`\`"
-            if [ "$HAS_ARM64" = "true" ]; then
-              echo ""
-              echo "**ARM64**"
-              echo ""
-              echo "PowerShell:"
-              echo "\`\`\`powershell"
-              echo "Invoke-WebRequest -Uri \"https://github.com/portable-r/portable-r-windows/releases/download/v${V}/portable-r-${V}-win-aarch64.zip\" -OutFile portable-r.zip"
-              echo "Expand-Archive portable-r.zip -DestinationPath ."
-              echo "\`\`\`"
-              echo ""
-              echo "curl:"
-              echo "\`\`\`cmd"
-              echo "curl -fSLO https://github.com/portable-r/portable-r-windows/releases/download/v${V}/portable-r-${V}-win-aarch64.zip"
-              echo "tar -xf portable-r-${V}-win-aarch64.zip"
-              echo "\`\`\`"
-              echo ""
-              echo "> **Note:** CRAN does not yet distribute binary R packages for Windows ARM64."
-              echo "> Packages must be installed from source (\`type = \"source\"\`) or run under x64 emulation."
-            fi
-            echo ""
-            echo "### Usage"
-            echo "\`\`\`cmd"
-            echo "portable-r-${V}-win-x64\\bin\\Rscript.exe my_script.R"
-            echo "\`\`\`"
-            echo "No installation required. Packages install to the local \`library\\\` directory."
-          } > release-body.md
+  build-4_4_0:
+    needs: build-4_3_3
+    uses: ./.github/workflows/build-portable-r.yml
+    with:
+      r_version: '4.4.0'
+      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
+    permissions:
+      contents: write
 
-      - name: Create or update release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ matrix.r_version }}
-          name: R ${{ matrix.r_version }}
-          files: artifacts/*
-          body_path: release-body.md
+  build-4_4_1:
+    needs: build-4_4_0
+    uses: ./.github/workflows/build-portable-r.yml
+    with:
+      r_version: '4.4.1'
+      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
+    permissions:
+      contents: write
+
+  build-4_4_2:
+    needs: build-4_4_1
+    uses: ./.github/workflows/build-portable-r.yml
+    with:
+      r_version: '4.4.2'
+      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
+    permissions:
+      contents: write
+
+  build-4_4_3:
+    needs: build-4_4_2
+    uses: ./.github/workflows/build-portable-r.yml
+    with:
+      r_version: '4.4.3'
+      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
+    permissions:
+      contents: write
+
+  # ── R 4.5.x ─────────────────────────────────────────────────────────────
+
+  build-4_5_0:
+    needs: build-4_4_3
+    uses: ./.github/workflows/build-portable-r.yml
+    with:
+      r_version: '4.5.0'
+      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
+    permissions:
+      contents: write
+
+  build-4_5_1:
+    needs: build-4_5_0
+    uses: ./.github/workflows/build-portable-r.yml
+    with:
+      r_version: '4.5.1'
+      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
+    permissions:
+      contents: write
+
+  build-4_5_2:
+    needs: build-4_5_1
+    uses: ./.github/workflows/build-portable-r.yml
+    with:
+      r_version: '4.5.2'
+      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
+    permissions:
+      contents: write
+
+  build-4_5_3:
+    needs: build-4_5_2
+    uses: ./.github/workflows/build-portable-r.yml
+    with:
+      r_version: '4.5.3'
+      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
+    permissions:
+      contents: write

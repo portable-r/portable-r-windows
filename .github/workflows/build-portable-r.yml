@@ -7,12 +7,25 @@ on:
         description: 'R version to build (e.g., 4.5.3)'
         required: true
         default: '4.5.3'
+      include_rtools:
+        description: 'Also build R+Rtools bundle'
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      r_version:
+        required: true
+        type: string
+      include_rtools:
+        required: false
+        type: boolean
+        default: false
   push:
     tags:
       - 'v*'
 
 concurrency:
-  group: build-release
+  group: build-release-${{ inputs.r_version || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -20,17 +33,19 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       r_version: ${{ steps.resolve.outputs.r_version }}
+      include_rtools: ${{ steps.resolve.outputs.include_rtools }}
       matrix: ${{ steps.resolve.outputs.matrix }}
     steps:
       - id: resolve
         run: |
-          if [ -n "${{ github.event.inputs.r_version }}" ]; then
-            V="${{ github.event.inputs.r_version }}"
+          if [ -n "${{ inputs.r_version }}" ]; then
+            V="${{ inputs.r_version }}"
           else
             V="${{ github.ref_name }}"
             V="${V#v}"
           fi
           echo "r_version=$V" >> $GITHUB_OUTPUT
+          echo "include_rtools=${{ inputs.include_rtools || 'false' }}" >> $GITHUB_OUTPUT
 
           # ARM64 builds available for 4.4.0 through 4.5.2
           AARCH64_VERSIONS="4.4.0 4.4.1 4.4.2 4.4.3 4.5.0 4.5.1 4.5.2"
@@ -52,8 +67,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # ── R only ──────────────────────────────────────────────────────────
+
       - name: Build portable R
-        id: build
         shell: pwsh
         run: |
           .\build.ps1 -RVersion "${{ needs.prepare.outputs.r_version }}" -Architecture "${{ matrix.arch }}"
@@ -63,13 +79,38 @@ jobs:
         run: |
           .\tests\run-tests.ps1 "portable-r-${{ needs.prepare.outputs.r_version }}-win-${{ matrix.arch }}"
 
-      - name: Upload artifact
+      - name: Upload R artifact
         uses: actions/upload-artifact@v7
         with:
           name: portable-r-${{ needs.prepare.outputs.r_version }}-win-${{ matrix.arch }}
           path: |
             portable-r-*-win-${{ matrix.arch }}.zip
             portable-r-*-win-${{ matrix.arch }}.zip.sha256
+          if-no-files-found: error
+
+      # ── R + Rtools ──────────────────────────────────────────────────────
+
+      - name: Build portable R + Rtools
+        if: needs.prepare.outputs.include_rtools == 'true'
+        shell: pwsh
+        run: |
+          .\build.ps1 -RVersion "${{ needs.prepare.outputs.r_version }}" -Architecture "${{ matrix.arch }}" -IncludeRtools
+
+      - name: Test portable R + Rtools
+        if: needs.prepare.outputs.include_rtools == 'true'
+        shell: pwsh
+        run: |
+          .\tests\run-tests.ps1 "portable-r-${{ needs.prepare.outputs.r_version }}-win-${{ matrix.arch }}-full"
+
+      - name: Upload R + Rtools artifact
+        if: needs.prepare.outputs.include_rtools == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: portable-r-${{ needs.prepare.outputs.r_version }}-win-${{ matrix.arch }}-full
+          path: |
+            portable-r-*-win-${{ matrix.arch }}-full.7z
+            portable-r-*-win-${{ matrix.arch }}-full.7z.sha256
+          if-no-files-found: error
 
   release:
     needs: [prepare, build]
@@ -91,63 +132,85 @@ jobs:
           name: portable-r-${{ needs.prepare.outputs.r_version }}-win-aarch64
           path: artifacts/
 
+      - name: Download x64 full artifact
+        if: needs.prepare.outputs.include_rtools == 'true'
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: portable-r-${{ needs.prepare.outputs.r_version }}-win-x64-full
+          path: artifacts/
+
+      - name: Download aarch64 full artifact
+        if: needs.prepare.outputs.include_rtools == 'true'
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: portable-r-${{ needs.prepare.outputs.r_version }}-win-aarch64-full
+          path: artifacts/
+
       - name: Generate release body
         run: |
           V="${{ needs.prepare.outputs.r_version }}"
           HAS_ARM64=false
-          if [ -f "artifacts/portable-r-${V}-win-aarch64.zip" ]; then
-            HAS_ARM64=true
-          fi
+          HAS_FULL=false
+          HAS_ARM64_FULL=false
 
+          [ -f "artifacts/portable-r-${V}-win-aarch64.zip" ] && HAS_ARM64=true
+          [ -f "artifacts/portable-r-${V}-win-x64-full.7z" ] && HAS_FULL=true
+          [ -f "artifacts/portable-r-${V}-win-aarch64-full.7z" ] && HAS_ARM64_FULL=true
+
+          # SHA256 checksums
           X64_SHA=$(cut -d' ' -f1 "artifacts/portable-r-${V}-win-x64.zip.sha256" 2>/dev/null || echo "n/a")
-          if [ "$HAS_ARM64" = "true" ]; then
-            ARM_SHA=$(cut -d' ' -f1 "artifacts/portable-r-${V}-win-aarch64.zip.sha256" 2>/dev/null || echo "n/a")
-          fi
+          [ "$HAS_ARM64" = "true" ] && ARM_SHA=$(cut -d' ' -f1 "artifacts/portable-r-${V}-win-aarch64.zip.sha256" 2>/dev/null || echo "n/a")
+          [ "$HAS_FULL" = "true" ] && X64_FULL_SHA=$(cut -d' ' -f1 "artifacts/portable-r-${V}-win-x64-full.7z.sha256" 2>/dev/null || echo "n/a")
+          [ "$HAS_ARM64_FULL" = "true" ] && ARM_FULL_SHA=$(cut -d' ' -f1 "artifacts/portable-r-${V}-win-aarch64-full.7z.sha256" 2>/dev/null || echo "n/a")
+
+          # File sizes (in MB)
+          filesize() { echo "$(( $(stat -c%s "$1" 2>/dev/null || stat -f%z "$1" 2>/dev/null || echo 0) / 1048576 )) MB"; }
+          X64_SIZE=$(filesize "artifacts/portable-r-${V}-win-x64.zip")
+          [ "$HAS_ARM64" = "true" ] && ARM_SIZE=$(filesize "artifacts/portable-r-${V}-win-aarch64.zip")
+          [ "$HAS_FULL" = "true" ] && X64_FULL_SIZE=$(filesize "artifacts/portable-r-${V}-win-x64-full.7z")
+          [ "$HAS_ARM64_FULL" = "true" ] && ARM_FULL_SIZE=$(filesize "artifacts/portable-r-${V}-win-aarch64-full.7z")
 
           {
             echo "## Portable R ${V} for Windows"
             echo ""
             echo "### Downloads"
-            echo "| Architecture | File | SHA256 |"
-            echo "|-------------|------|--------|"
-            echo "| Windows x64 | \`portable-r-${V}-win-x64.zip\` | \`${X64_SHA}\` |"
+            echo ""
+            echo "#### R only (binary packages)"
+            echo "| Architecture | File | Size | SHA256 |"
+            echo "|-------------|------|------|--------|"
+            echo "| Windows x64 | \`portable-r-${V}-win-x64.zip\` | ${X64_SIZE} | \`${X64_SHA}\` |"
             if [ "$HAS_ARM64" = "true" ]; then
-              echo "| Windows ARM64 | \`portable-r-${V}-win-aarch64.zip\` | \`${ARM_SHA}\` |"
+              echo "| Windows ARM64 | \`portable-r-${V}-win-aarch64.zip\` | ${ARM_SIZE} | \`${ARM_SHA}\` |"
             fi
+
+            if [ "$HAS_FULL" = "true" ]; then
+              echo ""
+              echo "#### R + Rtools (source compilation)"
+              echo "| Architecture | File | Size | SHA256 |"
+              echo "|-------------|------|------|--------|"
+              echo "| Windows x64 | \`portable-r-${V}-win-x64-full.7z\` | ${X64_FULL_SIZE} | \`${X64_FULL_SHA}\` |"
+              if [ "$HAS_ARM64_FULL" = "true" ]; then
+                echo "| Windows ARM64 | \`portable-r-${V}-win-aarch64-full.7z\` | ${ARM_FULL_SIZE} | \`${ARM_FULL_SHA}\` |"
+              fi
+            fi
+
             echo ""
             echo "### Quick Install"
             echo ""
-            echo "**x64**"
-            echo ""
-            echo "PowerShell:"
+            echo "**x64 (R only)**"
             echo "\`\`\`powershell"
             echo "Invoke-WebRequest -Uri \"https://github.com/portable-r/portable-r-windows/releases/download/v${V}/portable-r-${V}-win-x64.zip\" -OutFile portable-r.zip"
             echo "Expand-Archive portable-r.zip -DestinationPath ."
             echo "\`\`\`"
-            echo ""
-            echo "curl:"
-            echo "\`\`\`cmd"
-            echo "curl -fSLO https://github.com/portable-r/portable-r-windows/releases/download/v${V}/portable-r-${V}-win-x64.zip"
-            echo "tar -xf portable-r-${V}-win-x64.zip"
-            echo "\`\`\`"
-            if [ "$HAS_ARM64" = "true" ]; then
+            if [ "$HAS_FULL" = "true" ]; then
               echo ""
-              echo "**ARM64**"
-              echo ""
-              echo "PowerShell:"
-              echo "\`\`\`powershell"
-              echo "Invoke-WebRequest -Uri \"https://github.com/portable-r/portable-r-windows/releases/download/v${V}/portable-r-${V}-win-aarch64.zip\" -OutFile portable-r.zip"
-              echo "Expand-Archive portable-r.zip -DestinationPath ."
-              echo "\`\`\`"
-              echo ""
-              echo "curl:"
+              echo "**x64 (R + Rtools)**"
               echo "\`\`\`cmd"
-              echo "curl -fSLO https://github.com/portable-r/portable-r-windows/releases/download/v${V}/portable-r-${V}-win-aarch64.zip"
-              echo "tar -xf portable-r-${V}-win-aarch64.zip"
+              echo "curl.exe -fSLO https://github.com/portable-r/portable-r-windows/releases/download/v${V}/portable-r-${V}-win-x64-full.7z"
+              echo "7z x portable-r-${V}-win-x64-full.7z"
               echo "\`\`\`"
-              echo ""
-              echo "> **Note:** CRAN does not yet distribute binary R packages for Windows ARM64."
-              echo "> Packages must be installed from source (\`type = \"source\"\`) or run under x64 emulation."
             fi
             echo ""
             echo "### Usage"
@@ -155,6 +218,10 @@ jobs:
             echo "portable-r-${V}-win-x64\\bin\\Rscript.exe my_script.R"
             echo "\`\`\`"
             echo "No installation required. Packages install to the local \`library\\\` directory."
+            if [ "$HAS_FULL" = "true" ]; then
+              echo ""
+              echo "The **-full** variant includes Rtools, enabling \`install.packages(type='source')\` without any additional setup."
+            fi
           } > release-body.md
 
       - name: Create or update release

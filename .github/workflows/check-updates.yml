@@ -1,0 +1,111 @@
+# Check for new R and Rtools releases on CRAN
+#
+# Runs daily at 08:00 UTC. Scrapes CRAN and r-project.org for:
+#   - New R versions (x64 from cloud.r-project.org, aarch64 from r-project.org)
+#   - Updated Rtools installers (new build numbers for Rtools 43/44/45)
+#   - New Rtools major versions (e.g., Rtools46 appearing on CRAN)
+#
+# When changes are found:
+#   1. Updates versions.json with new versions/filenames
+#   2. Regenerates the README.md release tables from GitHub releases
+#   3. Commits versions.json, README.md, and LAST_CHECKED
+#   4. Triggers builds for any newly discovered R versions
+#
+# LAST_CHECKED is always updated (even when nothing changed) so you can
+# verify the cron is running without checking Actions logs.
+
+name: Check for Updates
+
+on:
+  schedule:
+    - cron: '0 8 * * *'  # Daily at 08:00 UTC
+  workflow_dispatch:       # Manual trigger from Actions tab
+
+permissions:
+  contents: write   # Push commits (versions.json, README.md, LAST_CHECKED)
+  actions: write    # Trigger build workflows for new versions
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Save a copy so we can diff after the check to find what's new
+      - name: Snapshot current versions
+        run: cp versions.json versions-before.json
+
+      # Scrapes CRAN pages, updates versions.json if anything changed,
+      # writes LAST_CHECKED summary, sets outputs.changed=true/false
+      - name: Check for new releases
+        id: check
+        run: bash check-updates.sh
+
+      # Rebuild the release tables in README.md from actual GitHub releases.
+      # Only runs when versions.json changed (new R version or Rtools build).
+      - name: Regenerate README
+        if: steps.check.outputs.changed == 'true'
+        run: bash generate-readme.sh
+
+      # Always commit LAST_CHECKED (proves the cron ran).
+      # Conditionally include versions.json and README.md when they changed.
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add LAST_CHECKED
+          if [ "${{ steps.check.outputs.changed }}" = "true" ]; then
+            git add versions.json README.md
+          fi
+          git diff --staged --quiet && exit 0
+          git commit -m "Check updates: $(date -u +%Y-%m-%d)"
+          git push
+
+      # Diff versions-before.json vs versions.json to find newly added R
+      # versions, then trigger a build workflow for each one (with Rtools).
+      - name: Trigger builds for new R versions
+        if: steps.check.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Compare before/after to find new R versions
+          BEFORE_X64=$(jq -r '.r.x64[]' versions-before.json | sort -V)
+          AFTER_X64=$(jq -r '.r.x64[]' versions.json | sort -V)
+          BEFORE_ARM=$(jq -r '.r.aarch64[]' versions-before.json | sort -V)
+          AFTER_ARM=$(jq -r '.r.aarch64[]' versions.json | sort -V)
+
+          NEW_X64=$(comm -23 <(echo "$AFTER_X64") <(echo "$BEFORE_X64"))
+          NEW_ARM=$(comm -23 <(echo "$AFTER_ARM") <(echo "$BEFORE_ARM"))
+          NEW_VERSIONS=$(echo -e "${NEW_X64}\n${NEW_ARM}" | sort -uV | grep -v '^$' || true)
+
+          # Trigger a build for each new R version (includes Rtools bundle)
+          for v in $NEW_VERSIONS; do
+            echo "Triggering build for new R $v..."
+            gh workflow run "Build Portable R for Windows" \
+              -f r_version="$v" \
+              -f include_rtools=true
+            sleep 5
+          done
+
+          # If Rtools installers changed (new build numbers), rebuild the
+          # latest R version in each affected series so the -full variant
+          # ships the updated toolchain. Old R versions keep their existing
+          # -full zips since they still work fine.
+          for RT in 43 44 45; do
+            BEFORE_FILE=$(jq -r ".rtools.\"${RT}\".x64.file" versions-before.json)
+            AFTER_FILE=$(jq -r ".rtools.\"${RT}\".x64.file" versions.json)
+            if [ "$BEFORE_FILE" != "$AFTER_FILE" ]; then
+              # Find the latest R version in this series from versions.json
+              SERIES=$(jq -r ".rtools.r_series | to_entries[] | select(.value==\"${RT}\") | .key" versions.json)
+              LATEST=$(jq -r ".r.x64[]" versions.json | grep "^${SERIES}\." | sort -V | tail -1)
+              if [ -n "$LATEST" ]; then
+                echo "Rtools${RT} updated ($BEFORE_FILE -> $AFTER_FILE), rebuilding R $LATEST -full..."
+                gh workflow run "Build Portable R for Windows" \
+                  -f r_version="$LATEST" \
+                  -f include_rtools=true
+                sleep 5
+              fi
+            fi
+          done
+
+          echo "Done"

@@ -1,6 +1,9 @@
 # Test suite for portable R builds (Windows)
+# Detects bundled Rtools and adjusts expectations accordingly.
+#
 # Usage: .\tests\run-tests.ps1 <PORTABLE_R_DIR>
 # Example: .\tests\run-tests.ps1 portable-r-4.5.3-win-x64
+#          .\tests\run-tests.ps1 portable-r-4.5.3-win-x64-full
 
 param(
     [Parameter(Mandatory=$true, Position=0)]
@@ -9,7 +12,7 @@ param(
 
 $ErrorActionPreference = "Continue"
 
-# ── Logging ──────────────────────────────────────────────────────────────────
+# ── Logging ────────���─────────────────────────────��───────────────────────────
 
 $script:Pass = 0
 $script:Fail = 0
@@ -20,7 +23,7 @@ function Fail($msg)    { Write-Host "  FAIL  $msg" -ForegroundColor Red;    $scr
 function Skip($msg)    { Write-Host "  SKIP  $msg" -ForegroundColor Yellow; $script:Skip++ }
 function Section($msg) { Write-Host "`n-- $msg --" -ForegroundColor Blue }
 
-# ── Setup ────────────────────────────────────────────────────────────────────
+# ── Setup ─────────────────────────────────────────────��──────────────────────
 
 if (-not (Test-Path $RDir)) {
     Write-Host "Error: $RDir does not exist" -ForegroundColor Red
@@ -31,7 +34,18 @@ $RDir = (Resolve-Path $RDir).Path
 $Rscript = Join-Path $RDir "bin\Rscript.exe"
 $RExe = Join-Path $RDir "bin\R.exe"
 
+# Detect bundled Rtools
+$rtoolsDir = Get-ChildItem -Path $RDir -Directory -Filter "rtools*" -ErrorAction SilentlyContinue | Select-Object -First 1
+$hasRtools = $false
+if ($rtoolsDir) {
+    $makeCheck = Join-Path $rtoolsDir.FullName "usr\bin\make.exe"
+    $hasRtools = Test-Path $makeCheck
+}
+
 Write-Host "Testing: $RDir" -ForegroundColor White
+if ($hasRtools) {
+    Write-Host "Rtools: $($rtoolsDir.Name) (bundled)" -ForegroundColor Cyan
+}
 
 # ── 1. Directory structure ───────────────────────────────────────────────────
 
@@ -62,7 +76,38 @@ foreach ($path in $requiredPaths) {
     }
 }
 
-# ── 2. No installer artifacts ────────────────────────────────────────────────
+# Check Rtools structure if bundled
+if ($hasRtools) {
+    $rtName = $rtoolsDir.Name
+    $rtPaths = @(
+        "$rtName\usr\bin\make.exe"
+    )
+
+    # Detect toolchain bin directory (x86_64 or aarch64)
+    $toolchainDir = Get-ChildItem -Path $rtoolsDir.FullName -Directory -Filter "*-w64-mingw32.static.posix" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($toolchainDir) {
+        $rtPaths += "$rtName\$($toolchainDir.Name)\bin\gcc.exe"
+    }
+
+    foreach ($path in $rtPaths) {
+        $full = Join-Path $RDir $path
+        if (Test-Path $full) {
+            Pass "$path exists"
+        } else {
+            Fail "$path missing"
+        }
+    }
+
+    # Check Renviron.site exists (needed for PATH configuration)
+    $renviron = Join-Path $RDir "etc\Renviron.site"
+    if (Test-Path $renviron) {
+        Pass "etc\Renviron.site exists"
+    } else {
+        Fail "etc\Renviron.site missing (Rtools PATH not configured)"
+    }
+}
+
+# ── 2. No installer artifacts ──────────────────��─────────────────────────────
 
 Section "Installer cleanup"
 
@@ -70,7 +115,16 @@ $uninstaller = Get-ChildItem -Path $RDir -Filter "unins*" -ErrorAction SilentlyC
 if ($uninstaller) {
     Fail "Uninstaller files still present: $($uninstaller.Name -join ', ')"
 } else {
-    Pass "No uninstaller files"
+    Pass "No uninstaller files in R directory"
+}
+
+if ($hasRtools) {
+    $rtUninstaller = Get-ChildItem -Path $rtoolsDir.FullName -Filter "unins*" -ErrorAction SilentlyContinue
+    if ($rtUninstaller) {
+        Fail "Rtools uninstaller files still present: $($rtUninstaller.Name -join ', ')"
+    } else {
+        Pass "No uninstaller files in Rtools directory"
+    }
 }
 
 # Check registry (HKCU only)
@@ -89,7 +143,7 @@ if ($rcore) {
     Pass "No R-core registry entries"
 }
 
-# ── 3. Basic execution ──────────────────────────────────────────────────────
+# ── 3. Basic execution ───────────���────────────────────────────────��─────────
 
 Section "Basic execution"
 
@@ -135,7 +189,7 @@ if ($libPath -eq $expectedLib) {
     Fail ".libPaths()[1]: expected $expectedLib, got $libPath"
 }
 
-# ── 4. Base packages ────────────────────────────────────────────────────────
+# ── 4. Base packages ──────────��─────────────────────────────────────────────
 
 Section "Base package loading"
 
@@ -148,7 +202,7 @@ foreach ($pkg in @("stats", "graphics", "grDevices", "utils", "methods")) {
     }
 }
 
-# ── 5. Capabilities ─────────────────────────────────────────────────────────
+# ── 5. Capabilities ─��───────────────────────────────────────────────────────
 
 Section "R capabilities"
 
@@ -161,7 +215,7 @@ foreach ($cap in @("http/ftp", "sockets", "libcurl")) {
     }
 }
 
-# ── 6. Internet connectivity ────────────────────────────────────────────────
+# ── 6. Internet connectivity ───────────��────────────────────────────────────
 
 Section "Internet connectivity"
 
@@ -172,7 +226,7 @@ if ($LASTEXITCODE -eq 0) {
     Fail "HTTPS connection to CRAN"
 }
 
-# ── 7. Numeric computation ──────────────────────────────────────────────────
+# ── 7. Numeric computation ──────────────���──────────────────────────────��────
 
 Section "Numeric computation"
 
@@ -204,7 +258,7 @@ if ($result -match "ok") {
 
 } # end if not aarch64
 
-# ── 9. Source package install ────────────────────────────────────────────────
+# ── 9. Source package install ────��──────────────────────────��────────────────
 
 Section "Source package install"
 
@@ -212,11 +266,70 @@ $result = & $Rscript -e "install.packages('glue', type='source', quiet=TRUE); li
 if ($result -match "ok") {
     Pass "install + load + use glue (from source)"
 } else {
-    # Source install may fail without Rtools, that's expected
-    Skip "Source install (may need Rtools)"
+    if ($hasRtools) {
+        Fail "Source install failed despite bundled Rtools"
+    } else {
+        Skip "Source install (may need Rtools)"
+    }
 }
 
-# ── Summary ──────────────────────────────────────────────────────────────────
+# ── 10. Bundled Rtools ──────────────��────────────────────────────────────────
+
+if ($hasRtools) {
+    Section "Bundled Rtools"
+
+    # aarch64 Rtools uses LLVM (clang/clang++) instead of GCC (gcc/g++)
+    if ($isAarch64) {
+        $ccCmd = "clang"
+        $ccPattern = "clang"
+        $cppCmd = "clang++"
+        $cppPattern = "clang"
+    } else {
+        $ccCmd = "gcc"
+        $ccPattern = "gcc|GCC"
+        $cppCmd = "g++.exe"
+        $cppPattern = "GCC|[Gg]\+\+|MinGW"
+    }
+
+    # C compiler accessible from R
+    $ccVer = & $Rscript -e "cat(system('$ccCmd --version', intern=TRUE)[1])" 2>&1
+    if ($LASTEXITCODE -eq 0 -and $ccVer -match $ccPattern) {
+        Pass "$ccCmd accessible from R: $ccVer"
+    } else {
+        Fail "$ccCmd not accessible from R (got: $ccVer)"
+    }
+
+    # C++ compiler accessible from R
+    $cppVer = & $Rscript -e "cat(system('$cppCmd --version', intern=TRUE)[1])" 2>&1
+    if ($LASTEXITCODE -eq 0 -and $cppVer -match $cppPattern) {
+        Pass "$cppCmd accessible from R: $cppVer"
+    } else {
+        Fail "$cppCmd not accessible from R (got: $cppVer)"
+    }
+
+    # make accessible from R
+    $makeVer = & $Rscript -e "cat(system('make --version', intern=TRUE)[1])" 2>&1
+    if ($LASTEXITCODE -eq 0 -and $makeVer -match "Make") {
+        Pass "make accessible from R: $makeVer"
+    } else {
+        Fail "make not accessible from R"
+    }
+
+    # Renviron.site has PATH configured
+    $renvironPath = Join-Path $RDir "etc\Renviron.site"
+    if (Test-Path $renvironPath) {
+        $content = Get-Content $renvironPath -Raw
+        if ($content -match "rtools" -and $content -match "PATH") {
+            Pass "Renviron.site configures Rtools PATH"
+        } else {
+            Fail "Renviron.site does not configure Rtools PATH"
+        }
+    } else {
+        Fail "Renviron.site not found"
+    }
+}
+
+# ── Summary ────────────────��───────────────────────────────��─────────────────
 
 $Total = $script:Pass + $script:Fail + $script:Skip
 

@@ -1,5 +1,10 @@
 # Build artifacts
 portable-r-*/
-*.exe
+portable-rtools*/
 *.zip
 *.sha256
+
+# Downloaded installers
+R-*-win.exe
+R-*-aarch64.exe
+rtools4*-*.exe
