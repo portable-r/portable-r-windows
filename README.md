@@ -130,6 +130,12 @@ Four workflows are available, triggered manually via `workflow_dispatch`:
 
 - [portable-r-macos](https://github.com/portable-r/portable-r-macos): Portable R for macOS (Apple Silicon and Intel)
 
+## Acknowledgements
+
+This project rests on the years of work [Tomáš Kalibera](https://stat.ethz.ch/pipermail/r-announce/2026/000721.html) put into modernising R on Windows — the UCRT toolchain, Rtools 4.x, and the relocatable installer that makes a "portable" build possible at all. Tomáš passed away on 1 April 2026; without his sustained effort on the Windows port this distribution would not exist. Our deepest thanks, and condolences to his family and colleagues.
+
+At the time of R 4.6.0's release it is not yet clear whether a dedicated Rtools46 will ship or whether Rtools45 will continue to be the supported toolchain for R 4.6.x. This repository currently maps R 4.6.x → Rtools45 and will be updated once R Core announces the toolchain plan.
+
 ## License
 
 R itself is licensed under GPL-2 | GPL-3. Rtools components are distributed under their respective licenses (GCC: GPL, MSYS2 tools: various). This repository provides build automation only.

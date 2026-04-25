@@ -129,3 +129,14 @@ jobs:
       include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
     permissions:
       contents: write
+
+  # ── R 4.6.x ─────────────────────────────────────────────────────────────
+
+  build-4_6_0:
+    needs: build-4_5_3
+    uses: ./.github/workflows/build-portable-r.yml
+    with:
+      r_version: '4.6.0'
+      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
+    permissions:
+      contents: write

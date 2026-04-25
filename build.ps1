@@ -7,8 +7,8 @@
 # ║    -RtoolsOnly:    Standalone portable Rtools toolchain                 ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 #
-# Usage: .\build.ps1 -RVersion "4.5.3"
-#        .\build.ps1 -RVersion "4.5.3" -IncludeRtools
+# Usage: .\build.ps1 -RVersion "4.6.0"
+#        .\build.ps1 -RVersion "4.6.0" -IncludeRtools
 #        .\build.ps1 -RtoolsOnly -RtoolsVersion "45"
 # Help:  .\build.ps1 -Help
 
@@ -65,8 +65,8 @@ Parameters:
   -Help           Show this help
 
 Examples:
-  .\build.ps1 -RVersion "4.5.3"                          # R only (x64)
-  .\build.ps1 -RVersion "4.5.3" -IncludeRtools           # R + Rtools
+  .\build.ps1 -RVersion "4.6.0"                          # R only (x64)
+  .\build.ps1 -RVersion "4.6.0" -IncludeRtools           # R + Rtools
   .\build.ps1 -RVersion "4.5.2" -Architecture "aarch64" -IncludeRtools
   .\build.ps1 -RtoolsOnly -RtoolsVersion "45"            # Rtools standalone
   .\build.ps1 -RtoolsOnly -RtoolsVersion "44" -Architecture "aarch64"
@@ -82,13 +82,14 @@ Output:
   portable-rtools{VER}-win-{ARCH}.zip
 
 Supported R versions:
-  x64:     4.3.0 - 4.5.3
+  x64:     4.3.0 - 4.6.0
   aarch64: 4.4.0 - 4.5.2 (from r-project.org experimental builds)
 
 Rtools version mapping:
   R 4.3.x -> Rtools43 (x64 and aarch64)
   R 4.4.x -> Rtools44 (x64 and aarch64)
   R 4.5.x -> Rtools45 (x64 and aarch64)
+  R 4.6.x -> Rtools45 (x64; a dedicated Rtools46 has not yet been announced)
 "@
     exit 0
 }

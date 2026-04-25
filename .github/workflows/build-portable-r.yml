@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       r_version:
-        description: 'R version to build (e.g., 4.5.3)'
+        description: 'R version to build (e.g., 4.6.0)'
         required: true
-        default: '4.5.3'
+        default: '4.6.0'
       include_rtools:
         description: 'Also build R+Rtools bundle'
         type: boolean
