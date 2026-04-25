@@ -121,7 +121,7 @@ A test suite (`tests/run-tests.ps1`) validates the build across directory struct
 
 Four workflows are available, triggered manually via `workflow_dispatch`:
 
-- **Build Portable R** (`build-portable-r.yml`): Builds a single R version for x64 and ARM64 (when available). Optional `include_rtools` checkbox builds the R + Rtools variant alongside.
+- **Build Portable R** (`build-portable-r.yml`): Builds a single R version for x64 and ARM64 (when available). Optional `include_rtools` checkbox builds the R + Rtools variant alongside. After the release is published, regenerates the README download table so it always reflects the latest release on GitHub.
 - **Build Portable Rtools** (`build-rtools.yml`): Builds standalone Rtools for a given version.
 - **Build All R Versions** (`build-all-versions.yml`): Builds all supported versions with optional `include_rtools`.
 - **Check for Updates** (`check-updates.yml`): Runs daily to detect new R and Rtools releases. Updates `versions.json`, regenerates this README, and triggers builds for new versions.

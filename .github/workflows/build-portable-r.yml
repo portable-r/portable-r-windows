@@ -199,18 +199,19 @@ jobs:
             echo ""
             echo "### Quick Install"
             echo ""
-            echo "**x64 (R only)**"
-            echo "\`\`\`powershell"
-            echo "Invoke-WebRequest -Uri \"https://github.com/portable-r/portable-r-windows/releases/download/v${V}/portable-r-${V}-win-x64.zip\" -OutFile portable-r.zip"
-            echo "Expand-Archive portable-r.zip -DestinationPath ."
+            echo "**R only** (\`.zip\`, works in PowerShell or Command Prompt)"
+            echo "\`\`\`"
+            echo "curl.exe -fSLO https://github.com/portable-r/portable-r-windows/releases/download/v${V}/portable-r-${V}-win-x64.zip"
+            echo "tar -xf portable-r-${V}-win-x64.zip"
             echo "\`\`\`"
             if [ "$HAS_FULL" = "true" ]; then
               echo ""
-              echo "**x64 (R + Rtools)**"
-              echo "\`\`\`cmd"
-              echo "curl.exe -fSLO https://github.com/portable-r/portable-r-windows/releases/download/v${V}/portable-r-${V}-win-x64-full.7z"
-              echo "7z x portable-r-${V}-win-x64-full.7z"
+              echo "**R + Rtools** (\`.7z\`, requires [7-Zip](https://7-zip.org/))"
               echo "\`\`\`"
+              echo "curl.exe -fSLO https://github.com/portable-r/portable-r-windows/releases/download/v${V}/portable-r-${V}-win-x64-full.7z"
+              echo "& \"\\\$env:ProgramFiles\\7-Zip\\7z.exe\" x portable-r-${V}-win-x64-full.7z"
+              echo "\`\`\`"
+              echo "> Install 7-Zip if needed: \`winget install 7zip.7zip\`"
             fi
             echo ""
             echo "### Usage"
@@ -231,3 +232,61 @@ jobs:
           name: R ${{ needs.prepare.outputs.r_version }}
           files: artifacts/*
           body_path: release-body.md
+
+  # Regenerate the README download table from the GitHub releases API once
+  # the release is published. Serialised against itself so parallel builds
+  # (e.g., from build-all-versions.yml) don't race; uses fetch+reset+retry
+  # so it cooperates with the daily check-updates cron pushing to main.
+  update-readme:
+    needs: [prepare, release]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: update-readme
+      cancel-in-progress: false
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Wait for release to be queryable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ needs.prepare.outputs.r_version }}"
+          for i in $(seq 1 6); do
+            if gh api "repos/${{ github.repository }}/releases/tags/${TAG}" >/dev/null 2>&1; then
+              echo "Release ${TAG} is visible"
+              exit 0
+            fi
+            echo "Release ${TAG} not yet visible, waiting 10s..."
+            sleep 10
+          done
+          echo "WARN: Release ${TAG} not visible after 60s, regenerating anyway" >&2
+
+      - name: Regenerate README and push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          for i in 1 2 3; do
+            git fetch origin main
+            git reset --hard origin/main
+            bash generate-readme.sh
+            git add README.md
+            if git diff --staged --quiet; then
+              echo "README already up to date"
+              exit 0
+            fi
+            git commit -m "Update README tables for v${{ needs.prepare.outputs.r_version }}"
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "Push race, retrying ($i/3)..."
+          done
+          echo "Failed to push after 3 attempts" >&2
+          exit 1
