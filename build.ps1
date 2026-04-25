@@ -108,24 +108,26 @@ $versions = Get-Content $versionsJsonPath -Raw | ConvertFrom-Json
 $VersionsX64     = @($versions.r.x64)
 $VersionsAarch64 = @($versions.r.aarch64)
 
-# Build Rtools mapping from versions.json
+# Build Rtools mapping from versions.json. Iterates r_series (series -> rtools,
+# many-to-one: e.g. both 4.5 and 4.6 map to Rtools45) so each series gets its own
+# entry, even when sharing an Rtools major.
 $RtoolsMap = @{}
-foreach ($rtVer in ($versions.rtools.PSObject.Properties | Where-Object { $_.Name -ne "r_series" })) {
-    $rt = $rtVer.Value
+foreach ($seriesProp in $versions.rtools.r_series.PSObject.Properties) {
+    $series = $seriesProp.Name
+    $rtVerName = $seriesProp.Value
+    $rtProp = $versions.rtools.PSObject.Properties | Where-Object { $_.Name -eq $rtVerName }
+    if (-not $rtProp) { continue }
+    $rt = $rtProp.Value
     $entry = @{
-        Version     = $rtVer.Name
+        Version     = $rtVerName
         FileX64     = $rt.x64.file
         FileAarch64 = $rt.aarch64.file
     }
-    # Custom URL if different from default CRAN path
-    $defaultUrl = "https://cran.r-project.org/bin/windows/Rtools/rtools$($rtVer.Name)/files"
+    $defaultUrl = "https://cran.r-project.org/bin/windows/Rtools/rtools${rtVerName}/files"
     if ($rt.aarch64.url -and $rt.aarch64.url -ne $defaultUrl) {
         $entry.UrlAarch64 = $rt.aarch64.url
     }
-    $series = ($versions.rtools.r_series.PSObject.Properties | Where-Object { $_.Value -eq $rtVer.Name }).Name
-    if ($series) {
-        $RtoolsMap[$series] = $entry
-    }
+    $RtoolsMap[$series] = $entry
 }
 
 # Reverse mapping: Rtools version -> R series
