@@ -97,6 +97,36 @@ else
     echo "  Up to date"
 fi
 
+# ── Infer r_series mapping for newly-added R series ─────────────────────────
+# When a new R series first appears (e.g., 4.6.x), default r_series to the
+# highest known Rtools within the same R major. Right ~95% of the time per
+# CRAN's loose convention (R 4.4 + 4.5 each got a new Rtools; R 4.6 reuses
+# Rtools45). When R Core does ship a new Rtools major, the existing
+# "new Rtools major" detector below flags it for manual review.
+
+if [ -n "$NEW_X64$NEW_AARCH64" ]; then
+    echo ""
+    echo "-- r_series mapping inference --"
+    for v in $NEW_X64 $NEW_AARCH64; do
+        series="${v%.*}"
+        if jq -e --arg s "$series" '.rtools.r_series[$s]' "$VERSIONS_FILE" >/dev/null; then
+            continue
+        fi
+        r_major="${series%%.*}"
+        fallback=$(jq -r '.rtools | keys[] | select(. != "r_series")' "$VERSIONS_FILE" \
+            | awk -v m="$r_major" 'int($1/10) == m' | sort -n | tail -1)
+        if [ -z "$fallback" ]; then
+            echo "  R $series: no Rtools in R ${r_major}.x to infer from -- manual setup required"
+            continue
+        fi
+        VERSIONS_FILE_TMP=$(mktemp)
+        jq --arg s "$series" --arg rt "$fallback" '.rtools.r_series[$s] = $rt' \
+            "$VERSIONS_FILE" > "$VERSIONS_FILE_TMP"
+        mv "$VERSIONS_FILE_TMP" "$VERSIONS_FILE"
+        echo "  R $series -> Rtools$fallback (verify when next Rtools ships)"
+    done
+fi
+
 # ── Check Rtools versions ───────────────────────────────────────────────────
 
 echo ""
