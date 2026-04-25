@@ -109,6 +109,44 @@ generate_rtools_table() {
     done
 }
 
+# ── Sync example versions in non-table sections ─────────────────────────────
+# The Quick Install / Usage / URL Pattern / Development sections all carry
+# example version numbers (e.g. "portable-r-4.5.3-win-x64.zip"). Keep them
+# pointed at the latest released version so download links and copy-paste
+# commands stay current. The Acknowledgements section is preserved verbatim
+# because it carries a historical reference (e.g. "At the time of R 4.6.0's
+# release...") that should not auto-update.
+
+LATEST_X64=$(echo "$R_VERSIONS" | head -n1)
+
+LATEST_ARM=""
+for v in $R_VERSIONS; do
+    if echo "$RELEASES_JSON" | jq -e --arg tag "v${v}" --arg pat "^portable-r-${v}-win-aarch64\\.zip$" \
+        '.[] | select(.tag == $tag) | .assets[] | select(.name | test($pat))' >/dev/null 2>&1; then
+        LATEST_ARM="$v"
+        break
+    fi
+done
+[ -z "$LATEST_ARM" ] && LATEST_ARM="$LATEST_X64"
+
+if [ -n "$LATEST_X64" ]; then
+    LATEST_X64="$LATEST_X64" LATEST_ARM="$LATEST_ARM" perl -i -pe '
+        BEGIN { our $past_ack = 0; our $X = $ENV{LATEST_X64}; our $A = $ENV{LATEST_ARM}; }
+        $past_ack = 1 if /^## Acknowledgements/;
+        unless ($past_ack) {
+            # ARM-specific must come first; the x64 -RVersion rule below uses a
+            # negative lookahead to skip this same line after it has been rewritten.
+            s/(-RVersion ")\d+\.\d+\.\d+(" -Architecture "aarch64")/$1$A$2/g;
+            s/(portable-r-)\d+\.\d+\.\d+(-win-x64)/$1$X$2/g;
+            s{(/v)\d+\.\d+\.\d+(/portable-r-)}{$1$X$2}g;
+            s/(-RVersion ")\d+\.\d+\.\d+(")(?! -Architecture "aarch64")/$1$X$2/g;
+            s/(Replace `)\d+\.\d+\.\d+(` with)/$1$X$2/g;
+            s/(e\.g\. `)\d+\.\d+\.\d+(`)/$1$X$2/g;
+        }
+    ' "$README"
+    echo "==> Synced example versions: x64=${LATEST_X64} aarch64=${LATEST_ARM}"
+fi
+
 # ── Inject into README ───────────────────────────────────────────────────────
 
 if [ -z "$R_VERSIONS" ] && [ -z "$RT_TAGS" ]; then
