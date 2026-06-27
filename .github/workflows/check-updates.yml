@@ -45,6 +45,9 @@ jobs:
       # Only runs when versions.json changed (new R version or Rtools build).
       - name: Regenerate README
         if: steps.check.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: bash generate-readme.sh
 
       # Always commit LAST_CHECKED (proves the cron ran).
