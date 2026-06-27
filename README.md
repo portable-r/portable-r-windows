@@ -9,35 +9,35 @@ An **R + Rtools** variant is also available, bundling the full [Rtools](https://
 **R only** (`.zip`, works in PowerShell or Command Prompt)
 
 ```
-curl.exe -fSLO https://github.com/portable-r/portable-r-windows/releases/download/v4.6.0/portable-r-4.6.0-win-x64.zip
-tar -xf portable-r-4.6.0-win-x64.zip
+curl.exe -fSLO https://github.com/portable-r/portable-r-windows/releases/download/v4.6.1/portable-r-4.6.1-win-x64.zip
+tar -xf portable-r-4.6.1-win-x64.zip
 ```
 
 **R + Rtools** (`.7z`, requires [7-Zip](https://7-zip.org/))
 
 ```
-curl.exe -fSLO https://github.com/portable-r/portable-r-windows/releases/download/v4.6.0/portable-r-4.6.0-win-x64-full.7z
-& "$env:ProgramFiles\7-Zip\7z.exe" x portable-r-4.6.0-win-x64-full.7z
+curl.exe -fSLO https://github.com/portable-r/portable-r-windows/releases/download/v4.6.1/portable-r-4.6.1-win-x64-full.7z
+& "$env:ProgramFiles\7-Zip\7z.exe" x portable-r-4.6.1-win-x64-full.7z
 ```
 
 > Install 7-Zip if needed: `winget install 7zip.7zip`. The `$env:ProgramFiles` expands to `C:\Program Files`, so this works even when 7-Zip is not on PATH. The R + Rtools variant uses `.7z` (~850 MB) because the bundled toolchain (~3.5 GB uncompressed) exceeds GitHub's 2 GB release asset limit under zip compression.
 
-Replace `4.6.0` with your desired version. See [all releases](https://github.com/portable-r/portable-r-windows/releases).
+Replace `4.6.1` with your desired version. See [all releases](https://github.com/portable-r/portable-r-windows/releases).
 
 ## Usage
 
 ```cmd
 :: Run an R script
-portable-r-4.6.0-win-x64\bin\Rscript.exe my_script.R
+portable-r-4.6.1-win-x64\bin\Rscript.exe my_script.R
 
 :: Start interactive R
-portable-r-4.6.0-win-x64\bin\R.exe
+portable-r-4.6.1-win-x64\bin\R.exe
 
 :: Install and use packages (works out of the box)
-portable-r-4.6.0-win-x64\bin\Rscript.exe -e "install.packages('jsonlite'); library(jsonlite); cat(toJSON(list(hello='world')))"
+portable-r-4.6.1-win-x64\bin\Rscript.exe -e "install.packages('jsonlite'); library(jsonlite); cat(toJSON(list(hello='world')))"
 
 :: Install from source (R + Rtools variant)
-portable-r-4.6.0-win-x64-full\bin\Rscript.exe -e "install.packages('Rcpp', type='source')"
+portable-r-4.6.1-win-x64-full\bin\Rscript.exe -e "install.packages('Rcpp', type='source')"
 ```
 
 No registry changes, no system-wide modifications. Packages install to the local `library\` directory inside the portable R folder.
@@ -52,6 +52,7 @@ ARM64 builds are available for R 4.4.0+, sourced from [R's experimental aarch64 
 
 | R Version | x64 | x64 + Rtools | ARM64 | ARM64 + Rtools |
 |-----------|-----|-------------|-------|----------------|
+| 4.6.1 | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.6.1/portable-r-4.6.1-win-x64.zip) (104 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.6.1/portable-r-4.6.1-win-x64-full.7z) (859 MB) |  |  |
 | 4.6.0 | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.6.0/portable-r-4.6.0-win-x64.zip) (104 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.6.0/portable-r-4.6.0-win-x64-full.7z) (859 MB) |  |  |
 | 4.5.3 | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.5.3/portable-r-4.5.3-win-x64.zip) (103 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.5.3/portable-r-4.5.3-win-x64-full.7z) (858 MB) |  |  |
 | 4.5.2 | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.5.2/portable-r-4.5.2-win-x64.zip) (103 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.5.2/portable-r-4.5.2-win-x64-full.7z) (858 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.5.2/portable-r-4.5.2-win-aarch64.zip) (98 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.5.2/portable-r-4.5.2-win-aarch64-full.7z) (873 MB) |
@@ -80,7 +81,7 @@ https://github.com/portable-r/portable-r-windows/releases/download/v{VERSION}/po
 https://github.com/portable-r/portable-r-windows/releases/download/v{VERSION}/portable-r-{VERSION}-win-{ARCH}-full.7z
 ```
 
-Where `{VERSION}` is e.g. `4.6.0` and `{ARCH}` is `x64` or `aarch64`. SHA256 checksums are at the same URL with a `.sha256` suffix.
+Where `{VERSION}` is e.g. `4.6.1` and `{ARCH}` is `x64` or `aarch64`. SHA256 checksums are at the same URL with a `.sha256` suffix.
 
 ## What Gets Patched
 
@@ -98,8 +99,8 @@ The R + Rtools variant additionally extracts the Rtools installer into a `rtools
 ### Building locally
 
 ```powershell
-.\build.ps1 -RVersion "4.6.0"                            # R only (x64)
-.\build.ps1 -RVersion "4.6.0" -IncludeRtools             # R + Rtools
+.\build.ps1 -RVersion "4.6.1"                            # R only (x64)
+.\build.ps1 -RVersion "4.6.1" -IncludeRtools             # R + Rtools
 .\build.ps1 -RVersion "4.5.2" -Architecture "aarch64"    # ARM64
 .\build.ps1 -RtoolsOnly -RtoolsVersion "45"              # Rtools standalone
 .\build.ps1 -Help                                        # Show all options
@@ -110,8 +111,8 @@ The R + Rtools variant additionally extracts the Rtools installer into a `rtools
 A test suite (`tests/run-tests.ps1`) validates the build across directory structure, installer cleanup, execution, base packages, capabilities, internet, numerics, and package installation. When bundled Rtools is detected, it also verifies compiler access and source package compilation.
 
 ```powershell
-.\tests\run-tests.ps1 "portable-r-4.6.0-win-x64"
-.\tests\run-tests.ps1 "portable-r-4.6.0-win-x64-full"
+.\tests\run-tests.ps1 "portable-r-4.6.1-win-x64"
+.\tests\run-tests.ps1 "portable-r-4.6.1-win-x64-full"
 ```
 
 ### Version management
