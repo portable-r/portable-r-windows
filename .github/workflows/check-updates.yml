@@ -27,8 +27,9 @@ on:
     - cron: '0 8 * * *'  # Daily at 08:00 UTC
   workflow_dispatch:       # Manual trigger from Actions tab
 
-# One run at a time: an overlapping run would commit and dispatch the same
-# new versions again
+# One run at a time. (A stale run, e.g. a re-run of a day that already
+# committed, fails at Commit on the LAST_CHECKED conflict rather than
+# dispatching builds twice or skipping a build that failed to dispatch.)
 concurrency:
   group: check-updates
   cancel-in-progress: false
@@ -41,11 +42,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      # The branch tip, not the triggering commit: a re-run of an older run
-      # must see what later runs already committed and built
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.ref }}
 
       # Save a copy so we can diff after the check to find what's new
       - name: Snapshot current versions
