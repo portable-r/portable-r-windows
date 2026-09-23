@@ -23,11 +23,29 @@
       "4.4.3",
       "4.5.0",
       "4.5.1",
-      "4.5.2"
+      "4.5.2",
+      "4.5.3",
+      "4.6.0",
+      "4.6.1"
     ],
+    "aarch64_legacy_sha256": {
+      "4.4.0": "4d42bc255e14896a74be0ef9d196672ed354ddb3db7bd8669ac28d695b442146",
+      "4.4.1": "639f6b18785bfa304ec5078cfd5c8cf37f9a2e4fa14575db096bba7bcdb067fe",
+      "4.4.2": "1dfb9c87d8a529dbeec11fe886174eddb2a89fc6eb89fa9c873b96118188b1d3",
+      "4.4.3": "d5619b33275582aa2eb6d7e0ca807a9adc4d2954655bfa2b965ce566878a7d86",
+      "4.5.0": "2a92bdbf7595b255130451963f18ba4af31434b04d6f5ce11880d773a1aa0b28",
+      "4.5.1": "ed66e636635c2a03ecc6bb88b3bae258fff6e59c51a6ac4dc0a85748bc359e1d",
+      "4.5.2": "3a1b0264cf85ddb146ea3f36d644baadfa8a2e9c4e0b68760c0b66ed43df9a72",
+      "4.5.3": "dfc950991f6287aba1628839256a4a4f1545d33bb3dad8c182406b49c3e7ebe4"
+    },
+    "aarch64_sha256": {
+      "4.6.0": "eeff8df89c6e92748cca3480fd08d5f6ac0d69a85da07a692051044ac7d69f27",
+      "4.6.1": "6667c345f0964e2a7f4fe375e8e39f3ae883435403f08c5cd942da4091b5a2fb"
+    },
     "urls": {
       "x64": "https://cloud.r-project.org/bin/windows/base",
-      "aarch64": "https://www.r-project.org/nosvn/winutf8/aarch64/R-4-signed"
+      "aarch64": "https://github.com/r-devel/windows-arm64/releases/download/{version}/R-{version}-aarch64.exe",
+      "aarch64_legacy": "https://github.com/r-hub/R/releases/download/v{version}/R-{version}-aarch64.exe"
     }
   },
   "rtools": {
@@ -38,7 +56,8 @@
       },
       "aarch64": {
         "file": "rtools43-aarch64-5958-5975.exe",
-        "url": "https://www.r-project.org/nosvn/winutf8/rtools43-aarch64"
+        "url": "https://github.com/r-windows/rtools-chocolatey/releases/download/5958",
+        "sha256": "1ff6ebb0fe45f1acc82835ea2d011082e8365566ab28011dab302ff24c4da4be"
       }
     },
     "44": {

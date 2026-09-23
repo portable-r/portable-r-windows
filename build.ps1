@@ -2,7 +2,7 @@
 # ║  build.ps1 - Build portable R and/or Rtools for Windows                 ║
 # ║                                                                         ║
 # ║  Three build modes:                                                     ║
-# ║    Default:        Portable R from CRAN installer (binary packages)     ║
+# ║    Default:        Portable R from the R installer (binary packages)    ║
 # ║    -IncludeRtools: Portable R + bundled Rtools (source compilation)     ║
 # ║    -RtoolsOnly:    Standalone portable Rtools toolchain                 ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
@@ -38,6 +38,20 @@ function Ok($msg)     { Write-Host "    $([char]0x2713) $msg" -ForegroundColor G
 function Warn($msg)   { Write-Host "    ! $msg" -ForegroundColor Yellow }
 function Err($msg)    { Write-Host "    x $msg" -ForegroundColor Red }
 function Detail($msg) { Write-Host "    $msg" -ForegroundColor DarkGray }
+
+# Exit unless $File matches the sha256 pinned in versions.json. A mismatching
+# file (e.g. an interrupted download) is deleted so the next run fetches it again.
+function Assert-Sha256($File, $Expected) {
+    $actual = (Get-FileHash -Algorithm SHA256 $File).Hash.ToLower()
+    if ($actual -ne $Expected) {
+        Err "SHA256 mismatch for $File (deleted; the next run downloads it again)"
+        Detail "Expected: $Expected"
+        Detail "Actual:   $actual"
+        Remove-Item $File -Force -ErrorAction SilentlyContinue
+        exit 1
+    }
+    Ok "SHA256 verified"
+}
 
 # ── Help ─────────────────────────────────────────────────────────────────────
 
@@ -81,15 +95,16 @@ Output:
   portable-rtools{VER}-win-{ARCH}\            Rtools standalone
   portable-rtools{VER}-win-{ARCH}.zip
 
-Supported R versions:
-  x64:     4.3.0 - 4.6.0
-  aarch64: 4.4.0 - 4.5.2 (from r-project.org experimental builds)
+Supported R versions (full list in versions.json):
+  x64:     4.3.0+ (CRAN)
+  aarch64: 4.4.0 - 4.5.3 (Tomas Kalibera's builds)
+           4.6.0+ (community builds, github.com/r-devel/windows-arm64)
 
 Rtools version mapping:
   R 4.3.x -> Rtools43 (x64 and aarch64)
   R 4.4.x -> Rtools44 (x64 and aarch64)
   R 4.5.x -> Rtools45 (x64 and aarch64)
-  R 4.6.x -> Rtools45 (x64; a dedicated Rtools46 has not yet been announced)
+  R 4.6.x -> Rtools45 (x64 and aarch64; a dedicated Rtools46 has not yet been announced)
 "@
     exit 0
 }
@@ -122,6 +137,7 @@ foreach ($seriesProp in $versions.rtools.r_series.PSObject.Properties) {
         Version     = $rtVerName
         FileX64     = $rt.x64.file
         FileAarch64 = $rt.aarch64.file
+        ShaAarch64  = $rt.aarch64.sha256
     }
     $defaultUrl = "https://cran.r-project.org/bin/windows/Rtools/rtools${rtVerName}/files"
     if ($rt.aarch64.url -and $rt.aarch64.url -ne $defaultUrl) {
@@ -209,6 +225,7 @@ if ($buildRtools) {
     $rtCustomUrl = if ($Architecture -eq "aarch64" -and $rtoolsInfo.UrlAarch64) {
         $rtoolsInfo.UrlAarch64
     } else { $null }
+    $rtSha = if ($Architecture -eq "aarch64") { $rtoolsInfo.ShaAarch64 } else { $null }
 
     if (-not $rtFile) {
         Err "Rtools$rtVer does not support $Architecture"
@@ -257,29 +274,51 @@ Write-Host ""
 # ═══════════════════════════════════════════════════════════════════════════════
 # Step 1: Download R installer
 # x64 builds come from CRAN (current at /base/, older at /base/old/{VERSION}/).
-# ARM64 builds come from R's experimental aarch64 repository.
+# ARM64 builds (URL templates in versions.json r.urls):
+#   R 4.4.0 - 4.5.3: Tomáš Kalibera's builds. Their original home,
+#     r-project.org/nosvn/winutf8/aarch64 (R-4-signed/, and R-4/ for the
+#     unsigned 4.5.3), has been offline since August 2026; r-hub mirrors the
+#     files, verified against r.aarch64_legacy_sha256 in versions.json.
+#   R 4.6.0+: community builds from github.com/r-devel/windows-arm64,
+#     verified against r.aarch64_sha256 (GitHub's digest, recorded by
+#     check-updates.sh).
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if ($buildR) {
     Step "Downloading R installer"
 
-    if (-not (Test-Path $rInstallerFile)) {
-        if ($Architecture -eq "aarch64") {
-            $primaryUrl = "https://www.r-project.org/nosvn/winutf8/aarch64/R-4-signed/$rInstallerFile"
-            $fallbackUrl = $primaryUrl
+    $expectedSha = $null
+    if ($Architecture -eq "aarch64") {
+        $legacySha = $versions.r.aarch64_legacy_sha256.PSObject.Properties[$RVersion]
+        if ($legacySha) {
+            $urlTemplate = $versions.r.urls.aarch64_legacy
+            $expectedSha = $legacySha.Value
         } else {
-            $baseUrl = "https://cloud.r-project.org/bin/windows/base"
-            $primaryUrl = "${baseUrl}/$rInstallerFile"
-            $fallbackUrl = "${baseUrl}/old/${RVersion}/$rInstallerFile"
+            $urlTemplate = $versions.r.urls.aarch64
+            $pinnedSha = $versions.r.aarch64_sha256.PSObject.Properties[$RVersion]
+            if ($pinnedSha) { $expectedSha = $pinnedSha.Value }
         }
+        $primaryUrl = $urlTemplate.Replace("{version}", $RVersion)
+        $fallbackUrl = $primaryUrl
+    } else {
+        $baseUrl = "https://cloud.r-project.org/bin/windows/base"
+        $primaryUrl = "${baseUrl}/$rInstallerFile"
+        $fallbackUrl = "${baseUrl}/old/${RVersion}/$rInstallerFile"
+    }
 
+    if (-not (Test-Path $rInstallerFile)) {
         Detail $primaryUrl
         $curlExe = Get-Command curl.exe -ErrorAction SilentlyContinue
         if ($curlExe) {
             $null = & curl.exe -fSL -o $rInstallerFile $primaryUrl 2>&1
-            if ($LASTEXITCODE -ne 0) {
+            if ($LASTEXITCODE -ne 0 -and $fallbackUrl -ne $primaryUrl) {
                 Detail "Not at primary URL, trying archive..."
                 $null = & curl.exe -fSL -o $rInstallerFile $fallbackUrl 2>&1
+            }
+            if ($LASTEXITCODE -ne 0) {
+                Remove-Item $rInstallerFile -Force -ErrorAction SilentlyContinue
+                Err "Failed to download $rInstallerFile"
+                exit 1
             }
             Ok "Downloaded $rInstallerFile"
         } else {
@@ -287,20 +326,38 @@ if ($buildR) {
                 Invoke-WebRequest -Uri $primaryUrl -OutFile $rInstallerFile
                 Ok "Downloaded $rInstallerFile"
             } catch {
-                Detail "Not at primary URL, trying archive..."
-                Invoke-WebRequest -Uri $fallbackUrl -OutFile $rInstallerFile
+                $downloaded = $false
+                if ($fallbackUrl -ne $primaryUrl) {
+                    Detail "Not at primary URL, trying archive..."
+                    try {
+                        Invoke-WebRequest -Uri $fallbackUrl -OutFile $rInstallerFile
+                        $downloaded = $true
+                    } catch { }
+                }
+                if (-not $downloaded) {
+                    Remove-Item $rInstallerFile -Force -ErrorAction SilentlyContinue
+                    Err "Failed to download $rInstallerFile"
+                    exit 1
+                }
                 Ok "Downloaded $rInstallerFile (from archive)"
             }
         }
     } else {
         Ok "Using cached $rInstallerFile"
     }
+
+    if ($expectedSha) {
+        Assert-Sha256 $rInstallerFile $expectedSha
+    }
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Step 2: Download Rtools installer
-# Most versions from CRAN at /bin/windows/Rtools/rtools{VER}/files/.
-# Rtools43 aarch64 from r-project.org/nosvn/winutf8/rtools43-aarch64/.
+# All versions from CRAN at /bin/windows/Rtools/rtools{VER}/files/, unless
+# versions.json sets a custom aarch64 url. Rtools43 aarch64 is Tomáš
+# Kalibera's build, whose original home on r-project.org/nosvn/winutf8 is
+# offline; it comes from the r-windows/rtools-chocolatey mirror, verified
+# against the sha256 pinned in versions.json.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if ($buildRtools) {
@@ -318,6 +375,7 @@ if ($buildRtools) {
         if ($curlExe) {
             $null = & curl.exe -fSL -o $rtFile $rtUrl 2>&1
             if ($LASTEXITCODE -ne 0) {
+                Remove-Item $rtFile -Force -ErrorAction SilentlyContinue
                 Err "Failed to download $rtFile"
                 exit 1
             }
@@ -327,12 +385,17 @@ if ($buildRtools) {
                 Invoke-WebRequest -Uri $rtUrl -OutFile $rtFile
                 Ok "Downloaded $rtFile"
             } catch {
+                Remove-Item $rtFile -Force -ErrorAction SilentlyContinue
                 Err "Failed to download $rtFile"
                 exit 1
             }
         }
     } else {
         Ok "Using cached $rtFile"
+    }
+
+    if ($rtSha) {
+        Assert-Sha256 $rtFile $rtSha
     }
 }
 
@@ -416,6 +479,10 @@ function Extract-InnoSetup($InstallerPath, $DestDir) {
     if (-not $extracted) {
         # Fallback: run the Inno Setup installer silently with a timeout.
         # Some Inno Setup 6.2+ installers hang indefinitely on CI runners.
+        # innoextract 1.9 cannot read Inno Setup 6.7 (the R 4.6+ aarch64
+        # installers), so those always take this path. Deselect the R
+        # installer's tasks that would register this build as the user's
+        # current R (HKCU\Software\R-core) and add a desktop shortcut.
         Detail "Using silent install (10 min timeout)"
         if (-not (Test-Path $DestDir)) {
             New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
@@ -425,6 +492,7 @@ function Extract-InnoSetup($InstallerPath, $DestDir) {
             "/SUPPRESSMSGBOXES",
             "/CURRENTUSER",
             "/NOICONS",
+            "/MERGETASKS=!desktopicon,!recordversion,!associate",
             "/DIR=$DestDir"
         )
         $finished = $proc.WaitForExit(1800000)  # 30 minute timeout
@@ -516,6 +584,12 @@ if ($buildRtools) {
 # and (when Rtools is bundled) the toolchain PATH via Renviron.site.
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# CRAN has no Windows ARM64 binary packages. R 4.6+ aarch64 builds from
+# r-devel/windows-arm64 install clang-aarch64 binaries from r-universe instead
+# (the 4.6.0 and 4.6.1 installers select that package type in
+# etc/Renviron.site).
+$useRUniverse = $buildR -and $Architecture -eq "aarch64" -and ([version]$RVersion -ge [version]"4.6.0")
+
 if ($buildR) {
     Step "Configuring Rprofile.site"
 
@@ -524,11 +598,19 @@ if ($buildR) {
         New-Item -ItemType Directory -Path $etcDir -Force | Out-Null
     }
 
-    $rprofileContent = @"
-# Portable R configuration
-# All packages install to the local library/ directory
-.libPaths(.Library)
-
+    if ($useRUniverse) {
+        # Same repos as the installer's etc/repositories from R 4.6.1 on;
+        # set explicitly because the 4.6.0 installer still has @CRAN@
+        $reposContent = @"
+# Windows ARM64 binary packages come from r-universe (CRAN has none):
+#   https://cran.r-universe.dev/bin/windows/clang-aarch64/contrib/<R x.y>/
+#   https://bioc-release.r-universe.dev/bin/windows/clang-aarch64/contrib/<R x.y>/
+options(repos = c(CRAN = "https://cran.r-universe.dev",
+                  BIOC = "https://bioc-release.r-universe.dev"))
+"@
+        $reposMsg = "r-universe repos"
+    } else {
+        $reposContent = @"
 # Suppress the default CRAN mirror prompt
 local({
   r <- getOption("repos")
@@ -536,9 +618,19 @@ local({
   options(repos = r)
 })
 "@
+        $reposMsg = "CRAN mirror"
+    }
+
+    $rprofileContent = @"
+# Portable R configuration
+# All packages install to the local library/ directory
+.libPaths(.Library)
+
+$reposContent
+"@
 
     Set-Content -Path (Join-Path $etcDir "Rprofile.site") -Value $rprofileContent -Encoding UTF8
-    Ok "Local library paths and CRAN mirror configured"
+    Ok "Local library paths and $reposMsg configured"
 
     $libraryDir = Join-Path $outputPath "library"
     if (-not (Test-Path $libraryDir)) {
@@ -585,7 +677,9 @@ __RTOOLS_HOME_VAR__=${R_HOME}/__RTOOLS_DIR__
         $renvironContent = $renvironContent.Replace("__RTOOLS_DIR__", "rtools${rtVer}")
         $renvironContent = $renvironContent.Replace("__TOOLCHAIN_BIN__", $rtToolchainBin)
 
-        Set-Content -Path (Join-Path $etcDir "Renviron.site") -Value $renvironContent -Encoding UTF8
+        # Append rather than overwrite: the R 4.6.0/4.6.1 aarch64 installers
+        # ship an Renviron.site that sets R_PLATFORM_PKGTYPE (package type)
+        Add-Content -Path (Join-Path $etcDir "Renviron.site") -Value "", $renvironContent -Encoding UTF8
         Ok "Rtools$rtVer PATH configured in Renviron.site"
     }
 }
@@ -620,16 +714,19 @@ if ($buildR) {
             Err "Package loading failed"
         }
 
-        # Binary package install (x64 only, CRAN has no ARM64 binaries)
-        if ($Architecture -ne "aarch64") {
-            $null = & $rscript -e "install.packages('jsonlite', quiet=TRUE); library(jsonlite); cat(toJSON(list(test=TRUE)))" 2>&1
+        # Binary package install (x64 from CRAN, aarch64 R 4.6+ from r-universe;
+        # older aarch64 builds have no binary packages anywhere)
+        if ($Architecture -ne "aarch64" -or $useRUniverse) {
+            # type='binary' on aarch64 fails if the binary package type was lost
+            $typeArg = if ($useRUniverse) { ", type='binary'" } else { "" }
+            $null = & $rscript -e "install.packages('jsonlite'$typeArg, quiet=TRUE); library(jsonlite); cat(toJSON(list(test=TRUE)))" 2>&1
             if ($LASTEXITCODE -eq 0) {
                 Ok "Binary package install (jsonlite)"
             } else {
                 Warn "Binary package install failed (may need internet)"
             }
         } else {
-            Detail "Skipping binary package install (no CRAN ARM64 binaries available)"
+            Detail "Skipping binary package install (no ARM64 binaries for R < 4.6)"
         }
 
         # Rtools verification (only when bundled)
