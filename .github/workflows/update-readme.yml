@@ -1,0 +1,71 @@
+# Regenerate the README download tables from the GitHub releases API once a
+# release is published. Called by build-portable-r.yml and build-rtools.yml.
+# Serialised against itself so parallel builds (e.g., from
+# build-all-versions.yml) don't race; uses fetch+reset+retry so it cooperates
+# with the daily check-updates cron pushing to main.
+
+name: Update README
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Release tag that was just published (e.g., v4.6.1, rtools45)'
+        required: true
+        type: string
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: update-readme
+      cancel-in-progress: false
+      queue: max  # keep every pending README update (default keeps only one)
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: Wait for release to be queryable
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          for i in $(seq 1 6); do
+            if gh api "repos/${{ github.repository }}/releases/tags/${TAG}" >/dev/null 2>&1; then
+              echo "Release ${TAG} is visible"
+              exit 0
+            fi
+            echo "Release ${TAG} not yet visible, waiting 10s..."
+            sleep 10
+          done
+          echo "WARN: Release ${TAG} not visible after 60s, regenerating anyway" >&2
+
+      - name: Regenerate README and push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          for i in 1 2 3; do
+            git fetch origin main
+            git reset --hard origin/main
+            bash generate-readme.sh
+            git add README.md
+            if git diff --staged --quiet; then
+              echo "README already up to date"
+              exit 0
+            fi
+            git commit -m "Update README tables for ${TAG}"
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "Push race, retrying ($i/3)..."
+          done
+          echo "Failed to push after 3 attempts" >&2
+          exit 1

@@ -7,8 +7,20 @@ on:
         description: 'R version to build (e.g., 4.6.0)'
         required: true
         default: '4.6.0'
+      arch:
+        description: 'Architectures to build (x64 or aarch64 alone leaves the other architecture''s published files untouched)'
+        type: choice
+        options:
+          - all
+          - x64
+          - aarch64
+        default: all
       include_rtools:
         description: 'Also build R+Rtools bundle'
+        type: boolean
+        default: false
+      full_only:
+        description: 'Only build the R+Rtools bundle (leaves the published R-only zip untouched, e.g. for an Rtools update)'
         type: boolean
         default: false
   workflow_call:
@@ -16,7 +28,15 @@ on:
       r_version:
         required: true
         type: string
+      arch:
+        required: false
+        type: string
+        default: all
       include_rtools:
+        required: false
+        type: boolean
+        default: false
+      full_only:
         required: false
         type: boolean
         default: false
@@ -27,6 +47,7 @@ on:
 concurrency:
   group: build-release-${{ inputs.r_version || github.ref_name }}
   cancel-in-progress: false
+  queue: max  # keep every pending run (default keeps one and cancels the rest)
 
 jobs:
   prepare:
@@ -34,28 +55,46 @@ jobs:
     outputs:
       r_version: ${{ steps.resolve.outputs.r_version }}
       include_rtools: ${{ steps.resolve.outputs.include_rtools }}
+      full_only: ${{ steps.resolve.outputs.full_only }}
       matrix: ${{ steps.resolve.outputs.matrix }}
     steps:
-      - id: resolve
-        run: |
-          if [ -n "${{ inputs.r_version }}" ]; then
-            V="${{ inputs.r_version }}"
-          else
-            V="${{ github.ref_name }}"
-            V="${V#v}"
-          fi
-          echo "r_version=$V" >> $GITHUB_OUTPUT
-          echo "include_rtools=${{ inputs.include_rtools || 'false' }}" >> $GITHUB_OUTPUT
+      - uses: actions/checkout@v7
 
-          # ARM64 builds available for 4.4.0 through 4.5.2
-          AARCH64_VERSIONS="4.4.0 4.4.1 4.4.2 4.4.3 4.5.0 4.5.1 4.5.2"
-          MATRIX='[{"arch":"x64","runner":"windows-latest"}'
-          if echo "$AARCH64_VERSIONS" | grep -qw "$V"; then
-            MATRIX="${MATRIX},{\"arch\":\"aarch64\",\"runner\":\"windows-11-arm\"}"
+      - id: resolve
+        env:
+          INPUT_VERSION: ${{ inputs.r_version }}
+          INPUT_ARCH: ${{ inputs.arch }}
+          INCLUDE_RTOOLS: ${{ inputs.include_rtools || 'false' }}
+          FULL_ONLY: ${{ inputs.full_only || 'false' }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          V="${INPUT_VERSION:-${REF_NAME#v}}"
+          ARCH="${INPUT_ARCH:-all}"
+          case "$ARCH" in
+            all|x64|aarch64) ;;
+            *) echo "::error::arch must be all, x64 or aarch64 (got '$ARCH')"; exit 1 ;;
+          esac
+          # full_only implies the R+Rtools bundle
+          [ "$FULL_ONLY" = "true" ] && INCLUDE_RTOOLS=true
+          echo "r_version=$V" >> "$GITHUB_OUTPUT"
+          echo "include_rtools=$INCLUDE_RTOOLS" >> "$GITHUB_OUTPUT"
+          echo "full_only=$FULL_ONLY" >> "$GITHUB_OUTPUT"
+
+          # Build each requested architecture that versions.json lists for V
+          ENTRIES=()
+          if [ "$ARCH" != "aarch64" ] && jq -e --arg v "$V" '.r.x64 | index($v)' versions.json >/dev/null; then
+            ENTRIES+=('{"arch":"x64","runner":"windows-latest"}')
           fi
-          MATRIX="${MATRIX}]"
-          echo "matrix={\"include\":$MATRIX}" >> $GITHUB_OUTPUT
-          echo "Building R $V: $MATRIX"
+          if [ "$ARCH" != "x64" ] && jq -e --arg v "$V" '.r.aarch64 | index($v)' versions.json >/dev/null; then
+            ENTRIES+=('{"arch":"aarch64","runner":"windows-11-arm"}')
+          fi
+          if [ ${#ENTRIES[@]} -eq 0 ]; then
+            echo "::error::versions.json lists no '$ARCH' build of R $V"
+            exit 1
+          fi
+          MATRIX="[$(IFS=,; echo "${ENTRIES[*]}")]"
+          echo "matrix={\"include\":$MATRIX}" >> "$GITHUB_OUTPUT"
+          echo "Building R $V ($ARCH): $MATRIX"
 
   build:
     needs: prepare
@@ -70,16 +109,19 @@ jobs:
       # ── R only ──────────────────────────────────────────────────────────
 
       - name: Build portable R
+        if: needs.prepare.outputs.full_only != 'true'
         shell: pwsh
         run: |
           .\build.ps1 -RVersion "${{ needs.prepare.outputs.r_version }}" -Architecture "${{ matrix.arch }}"
 
       - name: Test portable R
+        if: needs.prepare.outputs.full_only != 'true'
         shell: pwsh
         run: |
           .\tests\run-tests.ps1 "portable-r-${{ needs.prepare.outputs.r_version }}-win-${{ matrix.arch }}"
 
       - name: Upload R artifact
+        if: needs.prepare.outputs.full_only != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: portable-r-${{ needs.prepare.outputs.r_version }}-win-${{ matrix.arch }}
@@ -119,111 +161,180 @@ jobs:
       contents: write
 
     steps:
-      - name: Download x64 artifact
+      # Everything this run built (one artifact per arch and variant)
+      - name: Download artifacts
         uses: actions/download-artifact@v8
         with:
-          name: portable-r-${{ needs.prepare.outputs.r_version }}-win-x64
+          pattern: portable-r-${{ needs.prepare.outputs.r_version }}-win-*
           path: artifacts/
+          merge-multiple: true
 
-      - name: Download aarch64 artifact
-        uses: actions/download-artifact@v8
-        continue-on-error: true
-        with:
-          name: portable-r-${{ needs.prepare.outputs.r_version }}-win-aarch64
-          path: artifacts/
-
-      - name: Download x64 full artifact
-        if: needs.prepare.outputs.include_rtools == 'true'
-        uses: actions/download-artifact@v8
-        continue-on-error: true
-        with:
-          name: portable-r-${{ needs.prepare.outputs.r_version }}-win-x64-full
-          path: artifacts/
-
-      - name: Download aarch64 full artifact
-        if: needs.prepare.outputs.include_rtools == 'true'
-        uses: actions/download-artifact@v8
-        continue-on-error: true
-        with:
-          name: portable-r-${{ needs.prepare.outputs.r_version }}-win-aarch64-full
-          path: artifacts/
-
+      # The body lists every variant on the release: files built in this run
+      # plus any already published (e.g. x64 when this run only added
+      # aarch64). Only this run's files are uploaded, so other published
+      # assets are left untouched.
       - name: Generate release body
+        id: body
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          V: ${{ needs.prepare.outputs.r_version }}
         run: |
-          V="${{ needs.prepare.outputs.r_version }}"
-          HAS_ARM64=false
-          HAS_FULL=false
-          HAS_ARM64_FULL=false
+          set -o pipefail
+          TAG="v${V}"
 
-          [ -f "artifacts/portable-r-${V}-win-aarch64.zip" ] && HAS_ARM64=true
-          [ -f "artifacts/portable-r-${V}-win-x64-full.7z" ] && HAS_FULL=true
-          [ -f "artifacts/portable-r-${V}-win-aarch64-full.7z" ] && HAS_ARM64_FULL=true
+          # Assets already on the release ("release not found" = new release;
+          # any other error aborts rather than dropping published variants)
+          EXISTING='[]'
+          if OUT=$(gh release view "$TAG" --json assets --jq '[.assets[] | {name, size}]' 2>&1); then
+            EXISTING=$OUT
+          elif [ "$OUT" != "release not found" ]; then
+            echo "::error::gh release view $TAG failed: $OUT"
+            exit 1
+          fi
+          mkdir -p existing
 
-          # SHA256 checksums
-          X64_SHA=$(cut -d' ' -f1 "artifacts/portable-r-${V}-win-x64.zip.sha256" 2>/dev/null || echo "n/a")
-          [ "$HAS_ARM64" = "true" ] && ARM_SHA=$(cut -d' ' -f1 "artifacts/portable-r-${V}-win-aarch64.zip.sha256" 2>/dev/null || echo "n/a")
-          [ "$HAS_FULL" = "true" ] && X64_FULL_SHA=$(cut -d' ' -f1 "artifacts/portable-r-${V}-win-x64-full.7z.sha256" 2>/dev/null || echo "n/a")
-          [ "$HAS_ARM64_FULL" = "true" ] && ARM_FULL_SHA=$(cut -d' ' -f1 "artifacts/portable-r-${V}-win-aarch64-full.7z.sha256" 2>/dev/null || echo "n/a")
+          # Sets SIZE (MB) and SHA for a file that will be on the release,
+          # or leaves both empty
+          variant_info() {
+            SIZE=""
+            SHA=""
+            if [ -f "artifacts/$1" ]; then
+              SIZE=$(( $(stat -c%s "artifacts/$1") / 1048576 ))
+              SHA=$(cut -d' ' -f1 "artifacts/$1.sha256" 2>/dev/null || echo "n/a")
+            elif BYTES=$(echo "$EXISTING" | jq -e -r --arg f "$1" '.[] | select(.name == $f) | .size'); then
+              SIZE=$(( BYTES / 1048576 ))
+              SHA="n/a"
+              if gh release download "$TAG" --pattern "$1.sha256" --dir existing --clobber >/dev/null 2>&1; then
+                SHA=$(cut -d' ' -f1 "existing/$1.sha256")
+              fi
+            fi
+          }
 
-          # File sizes (in MB)
-          filesize() { echo "$(( $(stat -c%s "$1" 2>/dev/null || stat -f%z "$1" 2>/dev/null || echo 0) / 1048576 )) MB"; }
-          X64_SIZE=$(filesize "artifacts/portable-r-${V}-win-x64.zip")
-          [ "$HAS_ARM64" = "true" ] && ARM_SIZE=$(filesize "artifacts/portable-r-${V}-win-aarch64.zip")
-          [ "$HAS_FULL" = "true" ] && X64_FULL_SIZE=$(filesize "artifacts/portable-r-${V}-win-x64-full.7z")
-          [ "$HAS_ARM64_FULL" = "true" ] && ARM_FULL_SIZE=$(filesize "artifacts/portable-r-${V}-win-aarch64-full.7z")
+          X64="portable-r-${V}-win-x64.zip"
+          ARM="portable-r-${V}-win-aarch64.zip"
+          X64_FULL="portable-r-${V}-win-x64-full.7z"
+          ARM_FULL="portable-r-${V}-win-aarch64-full.7z"
+
+          variant_info "$X64";      X64_SIZE=$SIZE;      X64_SHA=$SHA
+          variant_info "$ARM";      ARM_SIZE=$SIZE;      ARM_SHA=$SHA
+          variant_info "$X64_FULL"; X64_FULL_SIZE=$SIZE; X64_FULL_SHA=$SHA
+          variant_info "$ARM_FULL"; ARM_FULL_SIZE=$SIZE; ARM_FULL_SHA=$SHA
+
+          # Quick Install / Usage examples use x64 unless only aarch64 exists
+          QI=x64
+          [ -z "$X64_SIZE" ] && [ -n "$ARM_SIZE" ] && QI=aarch64
+          QI_FULL=x64
+          [ -z "$X64_FULL_SIZE" ] && [ -n "$ARM_FULL_SIZE" ] && QI_FULL=aarch64
+          # Usage example directory: the R-only build, or -full if that is all there is
+          USAGE_DIR="portable-r-${V}-win-${QI}"
+          [ -z "$X64_SIZE$ARM_SIZE" ] && USAGE_DIR="portable-r-${V}-win-${QI_FULL}-full"
 
           {
             echo "## Portable R ${V} for Windows"
             echo ""
             echo "### Downloads"
             echo ""
-            echo "#### R only (binary packages)"
-            echo "| Architecture | File | Size | SHA256 |"
-            echo "|-------------|------|------|--------|"
-            echo "| Windows x64 | \`portable-r-${V}-win-x64.zip\` | ${X64_SIZE} | \`${X64_SHA}\` |"
-            if [ "$HAS_ARM64" = "true" ]; then
-              echo "| Windows ARM64 | \`portable-r-${V}-win-aarch64.zip\` | ${ARM_SIZE} | \`${ARM_SHA}\` |"
+            if [ -n "$X64_SIZE$ARM_SIZE" ]; then
+              echo "#### R only (binary packages)"
+              echo "| Architecture | File | Size | SHA256 |"
+              echo "|-------------|------|------|--------|"
+              if [ -n "$X64_SIZE" ]; then
+                echo "| Windows x64 | \`${X64}\` | ${X64_SIZE} MB | \`${X64_SHA}\` |"
+              fi
+              if [ -n "$ARM_SIZE" ]; then
+                echo "| Windows ARM64 | \`${ARM}\` | ${ARM_SIZE} MB | \`${ARM_SHA}\` |"
+              fi
             fi
 
-            if [ "$HAS_FULL" = "true" ]; then
+            if [ -n "$X64_FULL_SIZE$ARM_FULL_SIZE" ]; then
               echo ""
               echo "#### R + Rtools (source compilation)"
               echo "| Architecture | File | Size | SHA256 |"
               echo "|-------------|------|------|--------|"
-              echo "| Windows x64 | \`portable-r-${V}-win-x64-full.7z\` | ${X64_FULL_SIZE} | \`${X64_FULL_SHA}\` |"
-              if [ "$HAS_ARM64_FULL" = "true" ]; then
-                echo "| Windows ARM64 | \`portable-r-${V}-win-aarch64-full.7z\` | ${ARM_FULL_SIZE} | \`${ARM_FULL_SHA}\` |"
+              if [ -n "$X64_FULL_SIZE" ]; then
+                echo "| Windows x64 | \`${X64_FULL}\` | ${X64_FULL_SIZE} MB | \`${X64_FULL_SHA}\` |"
+              fi
+              if [ -n "$ARM_FULL_SIZE" ]; then
+                echo "| Windows ARM64 | \`${ARM_FULL}\` | ${ARM_FULL_SIZE} MB | \`${ARM_FULL_SHA}\` |"
               fi
             fi
 
             echo ""
             echo "### Quick Install"
-            echo ""
-            echo "**R only** (\`.zip\`, works in PowerShell or Command Prompt)"
-            echo "\`\`\`"
-            echo "curl.exe -fSLO https://github.com/portable-r/portable-r-windows/releases/download/v${V}/portable-r-${V}-win-x64.zip"
-            echo "tar -xf portable-r-${V}-win-x64.zip"
-            echo "\`\`\`"
-            if [ "$HAS_FULL" = "true" ]; then
+            if [ -n "$X64_SIZE$ARM_SIZE" ]; then
+              echo ""
+              echo "**R only** (\`.zip\`, works in PowerShell or Command Prompt)"
+              echo "\`\`\`"
+              echo "curl.exe -fSLO https://github.com/${GH_REPO}/releases/download/v${V}/portable-r-${V}-win-${QI}.zip"
+              echo "tar -xf portable-r-${V}-win-${QI}.zip"
+              echo "\`\`\`"
+            fi
+            if [ -n "$X64_FULL_SIZE$ARM_FULL_SIZE" ]; then
               echo ""
               echo "**R + Rtools** (\`.7z\`, requires [7-Zip](https://7-zip.org/))"
               echo "\`\`\`"
-              echo "curl.exe -fSLO https://github.com/portable-r/portable-r-windows/releases/download/v${V}/portable-r-${V}-win-x64-full.7z"
-              echo "& \"\\\$env:ProgramFiles\\7-Zip\\7z.exe\" x portable-r-${V}-win-x64-full.7z"
+              echo "curl.exe -fSLO https://github.com/${GH_REPO}/releases/download/v${V}/portable-r-${V}-win-${QI_FULL}-full.7z"
+              echo "& \"\$env:ProgramFiles\\7-Zip\\7z.exe\" x portable-r-${V}-win-${QI_FULL}-full.7z"
               echo "\`\`\`"
               echo "> Install 7-Zip if needed: \`winget install 7zip.7zip\`"
             fi
             echo ""
             echo "### Usage"
             echo "\`\`\`cmd"
-            echo "portable-r-${V}-win-x64\\bin\\Rscript.exe my_script.R"
+            echo "${USAGE_DIR}\\bin\\Rscript.exe my_script.R"
             echo "\`\`\`"
             echo "No installation required. Packages install to the local \`library\\\` directory."
-            if [ "$HAS_FULL" = "true" ]; then
+            if [ -n "$X64_FULL_SIZE$ARM_FULL_SIZE" ]; then
               echo ""
               echo "The **-full** variant includes Rtools, enabling \`install.packages(type='source')\` without any additional setup."
             fi
+
+            # ARM64 provenance and package source (see README "Packages on ARM64")
+            if [ -n "$ARM_SIZE$ARM_FULL_SIZE" ]; then
+              SERIES="${V%.*}"
+              echo ""
+              echo "### Windows ARM64"
+              if [ "$(printf '%s\n' "$V" 4.6.0 | sort -V | head -1)" = "4.6.0" ]; then
+                echo "Built from the [r-devel/windows-arm64](https://github.com/r-devel/windows-arm64) community installer (unsigned; not endorsed or supported by R Core). CRAN has no ARM64 binary packages, so this build installs binaries from r-universe:"
+                echo ""
+                echo "- CRAN: \`https://cran.r-universe.dev/bin/windows/clang-aarch64/contrib/${SERIES}/\`"
+                echo "- Bioconductor: \`https://bioc-release.r-universe.dev/bin/windows/clang-aarch64/contrib/${SERIES}/\`"
+              else
+                echo "Built from Tomáš Kalibera's R ${V} aarch64 installer, mirrored by [r-hub](https://github.com/r-hub/R/releases) and verified against a pinned SHA256. No ARM64 binary packages exist for R ${SERIES}: packages install from source, so use the ARM64 + Rtools variant for packages that need compilation."
+              fi
+            fi
           } > release-body.md
+
+          # Latest is the highest R version with x64 files, so backfilling an
+          # older release, or an ARM64 build that lands before CRAN's x64
+          # release, leaves the Latest badge where it is
+          HIGHEST=""
+          if [ -n "$X64_SIZE" ]; then
+            for attempt in 1 2 3; do
+              if HIGHEST=$(gh api "repos/${GH_REPO}/releases" --paginate \
+                --jq '[.[] | select((.draft or .prerelease) | not)
+                       | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))
+                       | select(any(.assets[]; .name | test("-win-x64\\.zip$")))
+                       | .tag_name | ltrimstr("v")]' \
+                | jq -rs --arg v "$V" 'add + [$v] | max_by(split(".") | map(tonumber))'); then
+                break
+              fi
+              HIGHEST=""
+              sleep $((attempt * 10))
+            done
+            if [ -z "$HIGHEST" ]; then
+              # Publishing matters more than the badge: let GitHub decide
+              echo "::warning::Could not list releases; leaving Latest to GitHub (make_latest=legacy)"
+              echo "make_latest=legacy" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          if [ "$HIGHEST" = "$V" ]; then
+            echo "make_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Create or update release
         uses: softprops/action-gh-release@v3
@@ -231,62 +342,15 @@ jobs:
           tag_name: v${{ needs.prepare.outputs.r_version }}
           name: R ${{ needs.prepare.outputs.r_version }}
           files: artifacts/*
+          fail_on_unmatched_files: true
           body_path: release-body.md
+          make_latest: ${{ steps.body.outputs.make_latest }}
 
-  # Regenerate the README download table from the GitHub releases API once
-  # the release is published. Serialised against itself so parallel builds
-  # (e.g., from build-all-versions.yml) don't race; uses fetch+reset+retry
-  # so it cooperates with the daily check-updates cron pushing to main.
+  # Regenerate the README download tables once the release is published
   update-readme:
     needs: [prepare, release]
-    runs-on: ubuntu-latest
-    concurrency:
-      group: update-readme
-      cancel-in-progress: false
+    uses: ./.github/workflows/update-readme.yml
+    with:
+      tag: v${{ needs.prepare.outputs.r_version }}
     permissions:
       contents: write
-
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: main
-
-      - name: Wait for release to be queryable
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="v${{ needs.prepare.outputs.r_version }}"
-          for i in $(seq 1 6); do
-            if gh api "repos/${{ github.repository }}/releases/tags/${TAG}" >/dev/null 2>&1; then
-              echo "Release ${TAG} is visible"
-              exit 0
-            fi
-            echo "Release ${TAG} not yet visible, waiting 10s..."
-            sleep 10
-          done
-          echo "WARN: Release ${TAG} not visible after 60s, regenerating anyway" >&2
-
-      - name: Regenerate README and push
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          for i in 1 2 3; do
-            git fetch origin main
-            git reset --hard origin/main
-            bash generate-readme.sh
-            git add README.md
-            if git diff --staged --quiet; then
-              echo "README already up to date"
-              exit 0
-            fi
-            git commit -m "Update README tables for v${{ needs.prepare.outputs.r_version }}"
-            if git push origin HEAD:main; then
-              exit 0
-            fi
-            echo "Push race, retrying ($i/3)..."
-          done
-          echo "Failed to push after 3 attempts" >&2
-          exit 1
