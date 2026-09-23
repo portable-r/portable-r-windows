@@ -85,8 +85,6 @@ RT_TAGS=$(echo "$RELEASES_JSON" | jq -r '
   [.[].tag | select(startswith("rtools"))] | unique | sort | reverse | .[]
 ')
 
-SERIES_MAP='{"43":"4.3","44":"4.4","45":"4.5"}'
-
 generate_rtools_table() {
     if [ -z "$RT_TAGS" ]; then
         return
@@ -100,12 +98,22 @@ generate_rtools_table() {
 
     for tag in $RT_TAGS; do
         rt="${tag#rtools}"  # rtools45 -> 45
-        series=$(echo "$SERIES_MAP" | jq -r --arg rt "$rt" '.[$rt] // "?"')
+        # R series served by this Rtools, from versions.json (e.g. "4.5.x, 4.6.x")
+        series=$(jq -r --arg rt "$rt" \
+            '[.rtools.r_series | to_entries[] | select(.value == $rt) | "R \(.key).x"] | join(", ") | if . == "" then "?" else . end' \
+            versions.json)
 
-        x64=$(asset_link "$tag" "portable-rtools${rt}-win-x64\\.zip$" "${DL}/${tag}/portable-rtools${rt}-win-x64.zip")
-        arm=$(asset_link "$tag" "portable-rtools${rt}-win-aarch64\\.zip$" "${DL}/${tag}/portable-rtools${rt}-win-aarch64.zip")
+        # Standalone Rtools archives are .7z (older ones may be .zip)
+        x64="" arm=""
+        for arch in x64 aarch64; do
+            fname=$(echo "$RELEASES_JSON" | jq -r --arg tag "$tag" --arg pat "^portable-rtools${rt}-win-${arch}\\.(zip|7z)$" \
+                '.[] | select(.tag == $tag) | .assets[] | select(.name | test($pat)) | .name' | head -1)
+            [ -z "$fname" ] && continue
+            link=$(asset_link "$tag" "^${fname//./\\.}$" "${DL}/${tag}/${fname}")
+            if [ "$arch" = "x64" ]; then x64="$link"; else arm="$link"; fi
+        done
 
-        echo "| Rtools${rt} | R ${series}.x | ${x64} | ${arm} |"
+        echo "| Rtools${rt} | ${series} | ${x64} | ${arm} |"
     done
 }
 
@@ -117,34 +125,46 @@ generate_rtools_table() {
 # because it carries a historical reference (e.g. "At the time of R 4.6.0's
 # release...") that should not auto-update.
 
-LATEST_X64=$(echo "$R_VERSIONS" | head -n1)
+# Newest release with an asset named portable-r-<version>-win-<suffix> (an
+# ARM64 or R-only build can be published before the other variants)
+latest_with() {
+    local suffix="$1" v
+    for v in $R_VERSIONS; do
+        if echo "$RELEASES_JSON" | jq -e --arg tag "v${v}" --arg pat "^portable-r-${v}-win-${suffix}$" \
+            '.[] | select(.tag == $tag) | .assets[] | select(.name | test($pat))' >/dev/null 2>&1; then
+            echo "$v"
+            return
+        fi
+    done
+}
 
-LATEST_ARM=""
-for v in $R_VERSIONS; do
-    if echo "$RELEASES_JSON" | jq -e --arg tag "v${v}" --arg pat "^portable-r-${v}-win-aarch64\\.zip$" \
-        '.[] | select(.tag == $tag) | .assets[] | select(.name | test($pat))' >/dev/null 2>&1; then
-        LATEST_ARM="$v"
-        break
-    fi
-done
+LATEST_X64=$(latest_with 'x64\.zip')
+[ -z "$LATEST_X64" ] && LATEST_X64=$(echo "$R_VERSIONS" | head -n1)
+LATEST_X64_FULL=$(latest_with 'x64-full\.(7z|zip)')
+[ -z "$LATEST_X64_FULL" ] && LATEST_X64_FULL="$LATEST_X64"
+LATEST_ARM=$(latest_with 'aarch64\.zip')
 [ -z "$LATEST_ARM" ] && LATEST_ARM="$LATEST_X64"
 
 if [ -n "$LATEST_X64" ]; then
-    LATEST_X64="$LATEST_X64" LATEST_ARM="$LATEST_ARM" perl -i -pe '
-        BEGIN { our $past_ack = 0; our $X = $ENV{LATEST_X64}; our $A = $ENV{LATEST_ARM}; }
+    LATEST_X64="$LATEST_X64" LATEST_X64_FULL="$LATEST_X64_FULL" LATEST_ARM="$LATEST_ARM" perl -i -pe '
+        BEGIN { our $past_ack = 0; our $X = $ENV{LATEST_X64}; our $XF = $ENV{LATEST_X64_FULL}; our $A = $ENV{LATEST_ARM}; }
         $past_ack = 1 if /^## Acknowledgements/;
         unless ($past_ack) {
+            # R + Rtools (-full) examples follow the newest release that has one
+            s{/v\d+\.\d+\.\d+/portable-r-\d+\.\d+\.\d+-win-x64-full}{/v$XF/portable-r-$XF-win-x64-full}g;
+            s/(portable-r-)\d+\.\d+\.\d+(-win-x64-full)/$1$XF$2/g;
             # ARM-specific must come first; the x64 -RVersion rule below uses a
             # negative lookahead to skip this same line after it has been rewritten.
             s/(-RVersion ")\d+\.\d+\.\d+(" -Architecture "aarch64")/$1$A$2/g;
-            s/(portable-r-)\d+\.\d+\.\d+(-win-x64)/$1$X$2/g;
-            s{(/v)\d+\.\d+\.\d+(/portable-r-)}{$1$X$2}g;
-            s/(-RVersion ")\d+\.\d+\.\d+(")(?! -Architecture "aarch64")/$1$X$2/g;
+            s/(-RVersion ")\d+\.\d+\.\d+(" -IncludeRtools)/$1$XF$2/g;
+            s/(portable-r-)\d+\.\d+\.\d+(-win-x64)(?!-full)/$1$X$2/g;
+            s{(/v)\d+\.\d+\.\d+(/portable-r-\d+\.\d+\.\d+-win-x64)(?!-full)}{$1$X$2}g;
+            s/(-RVersion ")\d+\.\d+\.\d+(")(?! -Architecture "aarch64"| -IncludeRtools)/$1$X$2/g;
             s/(Replace `)\d+\.\d+\.\d+(` with)/$1$X$2/g;
             s/(e\.g\. `)\d+\.\d+\.\d+(`)/$1$X$2/g;
         }
     ' "$README"
-    echo "==> Synced example versions: x64=${LATEST_X64} aarch64=${LATEST_ARM}"
+    echo "==> Synced example versions: x64=${LATEST_X64} x64-full=${LATEST_X64_FULL} aarch64=${LATEST_ARM}"
 fi
 
 # ── Inject into README ───────────────────────────────────────────────────────
