@@ -1,18 +1,23 @@
 # Check for new R and Rtools releases on CRAN
 #
-# Runs daily at 08:00 UTC. Scrapes CRAN and r-project.org for:
-#   - New R versions (x64 from cloud.r-project.org, aarch64 from r-project.org)
-#   - Updated Rtools installers (new build numbers for Rtools 43/44/45)
+# Runs daily at 08:00 UTC. Scrapes CRAN and GitHub for:
+#   - New R versions (x64 from cloud.r-project.org, aarch64 from the
+#     r-devel/windows-arm64 GitHub releases)
+#   - Updated Rtools installers (new build numbers)
 #   - New Rtools major versions (e.g., Rtools46 appearing on CRAN)
 #
 # When changes are found:
 #   1. Updates versions.json with new versions/filenames
-#   2. Regenerates the README.md release tables from GitHub releases
-#   3. Commits versions.json, README.md, and LAST_CHECKED
-#   4. Triggers builds for any newly discovered R versions
+#   2. Commits versions.json and LAST_CHECKED
+#   3. Triggers builds for the new R versions / architectures
+#      (trigger-builds.sh); each build regenerates the README tables
+#      once its release is published
 #
-# LAST_CHECKED is always updated (even when nothing changed) so you can
-# verify the cron is running without checking Actions logs.
+# Each upstream source is checked independently: one that cannot be reached
+# is skipped and reported (the run ends red) without blocking the others.
+# LAST_CHECKED is always updated and committed, so you can verify the cron is
+# running without checking Actions logs, and the daily commit keeps GitHub
+# from disabling this schedule for inactivity.
 
 name: Check for Updates
 
@@ -36,79 +41,57 @@ jobs:
         run: cp versions.json versions-before.json
 
       # Scrapes CRAN pages, updates versions.json if anything changed,
-      # writes LAST_CHECKED summary, sets outputs.changed=true/false
+      # writes LAST_CHECKED summary, sets outputs.changed=true/false and
+      # outputs.failed (unreachable sources; empty when all were checked)
       - name: Check for new releases
         id: check
+        env:
+          GH_TOKEN: ${{ github.token }}  # GitHub API for r-devel/windows-arm64
         run: bash check-updates.sh
 
-      # Rebuild the release tables in README.md from actual GitHub releases.
-      # Only runs when versions.json changed (new R version or Rtools build).
-      - name: Regenerate README
-        if: steps.check.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: bash generate-readme.sh
-
       # Always commit LAST_CHECKED (proves the cron ran).
-      # Conditionally include versions.json and README.md when they changed.
+      # Include versions.json when it changed. Only this workflow writes these
+      # two files, so a rebase over a build's README update cannot conflict.
       - name: Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add LAST_CHECKED
           if [ "${{ steps.check.outputs.changed }}" = "true" ]; then
-            git add versions.json README.md
+            git add versions.json
           fi
           git diff --staged --quiet && exit 0
           git commit -m "Check updates: $(date -u +%Y-%m-%d)"
-          git push
+          for i in 1 2 3; do
+            git push && exit 0
+            echo "Push rejected, rebasing ($i/3)..."
+            git pull --rebase origin main
+          done
+          echo "Failed to push after 3 attempts" >&2
+          exit 1
 
-      # Diff versions-before.json vs versions.json to find newly added R
-      # versions, then trigger a build workflow for each one (with Rtools).
+      # Build only the architectures that changed, so a late ARM64 installer
+      # does not rebuild (and re-publish) the existing x64 files
       - name: Trigger builds for new R versions
         if: steps.check.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+        run: bash trigger-builds.sh versions-before.json versions.json
+
+      # Runs last, after everything the reachable sources found has been
+      # committed and built: the red run (and GitHub's failure email) flags
+      # the sources that could not be checked
+      - name: Report unreachable sources
+        if: always() && steps.check.outputs.failed != ''
+        env:
+          FAILED: ${{ steps.check.outputs.failed }}
         run: |
-          # Compare before/after to find new R versions
-          BEFORE_X64=$(jq -r '.r.x64[]' versions-before.json | sort -V)
-          AFTER_X64=$(jq -r '.r.x64[]' versions.json | sort -V)
-          BEFORE_ARM=$(jq -r '.r.aarch64[]' versions-before.json | sort -V)
-          AFTER_ARM=$(jq -r '.r.aarch64[]' versions.json | sort -V)
-
-          NEW_X64=$(comm -23 <(echo "$AFTER_X64") <(echo "$BEFORE_X64"))
-          NEW_ARM=$(comm -23 <(echo "$AFTER_ARM") <(echo "$BEFORE_ARM"))
-          NEW_VERSIONS=$(echo -e "${NEW_X64}\n${NEW_ARM}" | sort -uV | grep -v '^$' || true)
-
-          # Trigger a build for each new R version (includes Rtools bundle)
-          for v in $NEW_VERSIONS; do
-            echo "Triggering build for new R $v..."
-            gh workflow run "Build Portable R for Windows" \
-              -f r_version="$v" \
-              -f include_rtools=true
-            sleep 5
-          done
-
-          # If Rtools installers changed (new build numbers), rebuild the
-          # latest R version in each affected series so the -full variant
-          # ships the updated toolchain. Old R versions keep their existing
-          # -full zips since they still work fine.
-          for RT in 43 44 45; do
-            BEFORE_FILE=$(jq -r ".rtools.\"${RT}\".x64.file" versions-before.json)
-            AFTER_FILE=$(jq -r ".rtools.\"${RT}\".x64.file" versions.json)
-            if [ "$BEFORE_FILE" != "$AFTER_FILE" ]; then
-              # Find the latest R version in this series from versions.json
-              SERIES=$(jq -r ".rtools.r_series | to_entries[] | select(.value==\"${RT}\") | .key" versions.json)
-              LATEST=$(jq -r ".r.x64[]" versions.json | grep "^${SERIES}\." | sort -V | tail -1)
-              if [ -n "$LATEST" ]; then
-                echo "Rtools${RT} updated ($BEFORE_FILE -> $AFTER_FILE), rebuilding R $LATEST -full..."
-                gh workflow run "Build Portable R for Windows" \
-                  -f r_version="$LATEST" \
-                  -f include_rtools=true
-                sleep 5
-              fi
-            fi
-          done
-
-          echo "Done"
+          {
+            echo "## Upstream sources could not be checked"
+            echo ""
+            echo "$FAILED" | tr ';' '\n' | sed 's/^ */- /'
+            echo ""
+            echo "Everything else was checked and committed. The next run retries these."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::Incomplete check: $FAILED"
+          exit 1
