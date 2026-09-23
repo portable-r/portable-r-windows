@@ -40,7 +40,7 @@ jobs:
       matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Resolve Rtools installer filename
         id: rtools-info
@@ -54,7 +54,7 @@ jobs:
 
       - name: Cache extracted Rtools
         id: cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: portable-rtools${{ needs.prepare.outputs.rtools_version }}-win-${{ matrix.arch }}
           key: rtools-${{ steps.rtools-info.outputs.installer }}
@@ -150,7 +150,7 @@ jobs:
           } > release-body.md
 
       - name: Create or update release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: rtools${{ needs.prepare.outputs.rtools_version }}
           name: Rtools${{ needs.prepare.outputs.rtools_version }}

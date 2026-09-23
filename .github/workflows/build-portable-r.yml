@@ -65,7 +65,7 @@ jobs:
       matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # ── R only ──────────────────────────────────────────────────────────
 
@@ -226,7 +226,7 @@ jobs:
           } > release-body.md
 
       - name: Create or update release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ needs.prepare.outputs.r_version }}
           name: R ${{ needs.prepare.outputs.r_version }}
@@ -247,7 +247,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: main
 
