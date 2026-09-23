@@ -88,6 +88,8 @@ CRAN does not publish Windows ARM64 binary packages.
 | 4.3.1 | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.3.1/portable-r-4.3.1-win-x64.zip) (94 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.3.1/portable-r-4.3.1-win-x64-full.7z) (793 MB) |  |  |
 | 4.3.0 | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.3.0/portable-r-4.3.0-win-x64.zip) (94 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.3.0/portable-r-4.3.0-win-x64-full.7z) (793 MB) |  |  |
 
+<sub>Last update check: 2026-08-13 · Last release built: 2026-09-23 (R 4.6.1)</sub>
+
 <!-- END RELEASES -->
 
 ## URL Pattern
@@ -138,7 +140,7 @@ A test suite (`tests/run-tests.ps1`) validates the build across directory struct
 
 ### Version management
 
-`versions.json` is the single source of truth for supported R versions, Rtools versions, installer URLs, and installer SHA256 pins; the build scripts, workflows and `Makefile` all read their version lists from it. `check-updates.sh` checks CRAN and the r-devel/windows-arm64 GitHub releases daily to detect new releases. `generate-readme.sh` updates the version tables in this README from GitHub releases.
+`versions.json` is the single source of truth for supported R versions, Rtools versions, installer URLs, and installer SHA256 pins; the build scripts, workflows and `Makefile` all read their version lists from it. `check-updates.sh` checks CRAN and the r-devel/windows-arm64 GitHub releases daily to detect new releases. `generate-readme.sh` updates the version tables in this README from GitHub releases, and the line under them: the date of the last daily update check of CRAN and r-devel/windows-arm64 (`LAST_CHECKED`) and of the last release build, which includes an architecture or variant added to an existing release.
 
 ### CI / GitHub Actions
 
