@@ -6,18 +6,19 @@
 #   - Updated Rtools installers (new build numbers)
 #   - New Rtools major versions (e.g., Rtools46 appearing on CRAN)
 #
-# When changes are found:
+# Every run:
 #   1. Updates versions.json with new versions/filenames
-#   2. Commits versions.json and LAST_CHECKED
-#   3. Triggers builds for the new R versions / architectures
-#      (trigger-builds.sh); each build regenerates the README tables
-#      once its release is published
+#   2. Regenerates the README tables and the "Last update check / Last release
+#      built" line under them
+#   3. Commits LAST_CHECKED and README.md (and versions.json when it changed)
+#   4. Triggers builds for the new R versions / architectures
+#      (trigger-builds.sh); each build regenerates the README again once its
+#      release is published
 #
 # Each upstream source is checked independently: one that cannot be reached
 # is skipped and reported (the run ends red) without blocking the others.
-# LAST_CHECKED is always updated and committed, so you can verify the cron is
-# running without checking Actions logs, and the daily commit keeps GitHub
-# from disabling this schedule for inactivity.
+# The daily commit shows the cron is running without checking Actions logs,
+# and keeps GitHub from disabling this schedule for inactivity.
 
 name: Check for Updates
 
@@ -25,6 +26,12 @@ on:
   schedule:
     - cron: '0 8 * * *'  # Daily at 08:00 UTC
   workflow_dispatch:       # Manual trigger from Actions tab
+
+# One run at a time: an overlapping run would commit and dispatch the same
+# new versions again
+concurrency:
+  group: check-updates
+  cancel-in-progress: false
 
 permissions:
   contents: write   # Push commits (versions.json, README.md, LAST_CHECKED)
@@ -34,7 +41,11 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+      # The branch tip, not the triggering commit: a re-run of an older run
+      # must see what later runs already committed and built
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref }}
 
       # Save a copy so we can diff after the check to find what's new
       - name: Snapshot current versions
@@ -49,14 +60,29 @@ jobs:
           GH_TOKEN: ${{ github.token }}  # GitHub API for r-devel/windows-arm64
         run: bash check-updates.sh
 
-      # Always commit LAST_CHECKED (proves the cron ran).
-      # Include versions.json when it changed. Only this workflow writes these
-      # two files, so a rebase over a build's README update cannot conflict.
+      # Refresh the README every run so the "Last update check" date under the
+      # tables stays current. A failure here only leaves the README as it
+      # was; LAST_CHECKED is still committed below.
+      - name: Regenerate README
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: bash generate-readme.sh
+
+      # Always commit LAST_CHECKED and README.md (proves the cron ran);
+      # include versions.json when it changed. If a build's README update
+      # pushed to main meanwhile, rebase onto it; README.md is fully generated,
+      # so a conflict there is resolved by regenerating it. Any other conflict
+      # stops the step.
       - name: Commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add LAST_CHECKED
+          git add LAST_CHECKED README.md
           if [ "${{ steps.check.outputs.changed }}" = "true" ]; then
             git add versions.json
           fi
@@ -65,7 +91,21 @@ jobs:
           for i in 1 2 3; do
             git push && exit 0
             echo "Push rejected, rebasing ($i/3)..."
-            git pull --rebase origin main
+            if ! git pull --rebase origin main; then
+              if [ "$(git diff --name-only --diff-filter=U)" != "README.md" ]; then
+                git rebase --abort || true
+                echo "Rebase failed with conflicts outside README.md" >&2
+                exit 1
+              fi
+              git checkout --ours README.md  # the upstream copy (rebase: ours = main)
+              bash generate-readme.sh || true
+              git add README.md
+              GIT_EDITOR=true git rebase --continue
+            fi
+            if bash generate-readme.sh && ! git diff --quiet README.md; then
+              git add README.md
+              git commit --amend --no-edit
+            fi
           done
           echo "Failed to push after 3 attempts" >&2
           exit 1

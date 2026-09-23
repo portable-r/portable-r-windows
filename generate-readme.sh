@@ -24,12 +24,14 @@ echo "==> Querying releases from $REPO"
 
 # ── Fetch all releases and their assets ──────────────────────────────────────
 
+# Drafts are skipped (a failed release job can leave one); pages are merged
+# into one array
 RELEASES_JSON=$(gh api "repos/${REPO}/releases" --paginate --jq '
-  [.[] | {
+  [.[] | select(.draft | not) | {
     tag: .tag_name,
-    assets: [.assets[] | {name: .name, size: .size}]
+    assets: [.assets[] | {name: .name, size: .size, created_at: .created_at}]
   }]
-')
+' | jq -c -s 'add // []')
 
 # ── Build R version table ────────────────────────────────────────────────────
 
@@ -117,6 +119,30 @@ generate_rtools_table() {
     done
 }
 
+# ── Status line under the tables ─────────────────────────────────────────────
+# Last update check: date of the last check-updates.sh run (LAST_CHECKED; it
+# polls CRAN and r-devel/windows-arm64), which the daily cron commits. Last release built: newest asset upload across all
+# releases, so adding an architecture or variant to an existing release
+# counts too.
+
+LAST_BUILT=$(echo "$RELEASES_JSON" | jq -r '
+  [.[] | .tag as $tag | .assets[] | {tag: $tag, at: .created_at}] | max_by(.at)
+  | if . == null then "never"
+    else "\(.at[0:10]) (\(.tag | if startswith("v") then "R " + ltrimstr("v") else "Rtools" + ltrimstr("rtools") end))"
+    end')
+
+LAST_CHECKED="never"
+if [ -f LAST_CHECKED ]; then
+    LAST_CHECKED=$(head -1 LAST_CHECKED)
+    LAST_CHECKED="${LAST_CHECKED%%T*}"  # YYYY-MM-DD
+    # check-updates.sh records "Status: incomplete (...)" when a source was unreachable
+    if grep -q '^Status: incomplete' LAST_CHECKED; then
+        LAST_CHECKED="${LAST_CHECKED} ([incomplete](LAST_CHECKED))"
+    fi
+fi
+
+STATUS_LINE="<sub>Last update check: ${LAST_CHECKED} · Last release built: ${LAST_BUILT}</sub>"
+
 # ── Sync example versions in non-table sections ─────────────────────────────
 # The Quick Install / Usage / URL Pattern / Development sections all carry
 # example version numbers (e.g. "portable-r-4.5.3-win-x64.zip"). Keep them
@@ -178,6 +204,7 @@ fi
 TABLE_FILE=$(mktemp)
 generate_r_table > "$TABLE_FILE"
 generate_rtools_table >> "$TABLE_FILE"
+printf '\n%s\n' "$STATUS_LINE" >> "$TABLE_FILE"
 
 {
     # Print everything before and including BEGIN marker
@@ -193,3 +220,4 @@ rm -f "$TABLE_FILE"
 
 COUNT=$(echo "$R_VERSIONS" | wc -w | tr -d ' ')
 echo "==> Updated README with $COUNT R versions"
+echo "    Last update check: ${LAST_CHECKED} · Last release built: ${LAST_BUILT}"
