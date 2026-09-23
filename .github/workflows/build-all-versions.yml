@@ -1,142 +1,85 @@
+# Build every R version listed in versions.json (or a chosen subset), one
+# version at a time, by calling build-portable-r.yml for each. The list is
+# read from versions.json, so new versions need no edits here.
+
 name: Build All R Versions
 
 on:
   workflow_dispatch:
     inputs:
+      versions:
+        description: 'R versions (space/comma separated). Empty = every version versions.json lists for the chosen arch'
+        type: string
+        default: ''
+      arch:
+        description: 'Architectures (x64 or aarch64 alone leaves the other architecture''s published files untouched)'
+        type: choice
+        options:
+          - all
+          - x64
+          - aarch64
+        default: all
       include_rtools:
         description: 'Also build R+Rtools bundles'
-        type: boolean
-        default: false
-      dry_run:
-        description: 'Dry run (build but skip release)'
         type: boolean
         default: false
 
 concurrency:
   group: build-all
   cancel-in-progress: false
+  queue: max  # keep every pending run (default keeps one and cancels the rest)
+
+permissions:
+  contents: read
 
 jobs:
-  # ── R 4.3.x ─────────────────────────────────────────────────────────────
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.list.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v7
 
-  build-4_3_0:
+      - id: list
+        env:
+          REQUESTED: ${{ inputs.versions }}
+          ARCH: ${{ inputs.arch }}
+        run: |
+          # Versions versions.json lists for the requested architecture(s)
+          case "$ARCH" in
+            x64)     AVAILABLE='.r.x64' ;;
+            aarch64) AVAILABLE='.r.aarch64' ;;
+            *)       AVAILABLE='(.r.x64 + .r.aarch64) | unique' ;;
+          esac
+          if [ -z "$REQUESTED" ]; then
+            LIST=$(jq -c "$AVAILABLE | sort_by(split(\".\") | map(tonumber))" versions.json)
+          else
+            LIST=$(jq -cn --arg s "$REQUESTED" '[$s | splits("[, ]+") | select(length > 0)]')
+            BAD=$(jq -r --argjson want "$LIST" "\$want - ($AVAILABLE) | .[]" versions.json)
+            if [ -n "$BAD" ]; then
+              echo "::error::versions.json lists no $ARCH build of: $BAD"
+              exit 1
+            fi
+          fi
+          if [ "$(jq 'length' <<<"$LIST")" -eq 0 ]; then
+            echo "::error::No versions to build"
+            exit 1
+          fi
+          echo "versions=$LIST" >> "$GITHUB_OUTPUT"
+          echo "Building ($ARCH): $LIST"
+
+  build:
+    name: R ${{ matrix.r_version }}
+    needs: prepare
+    strategy:
+      fail-fast: false      # a failed version must not cancel the ones still queued
+      max-parallel: 1       # one build-portable-r call at a time, in list order
+      matrix:
+        r_version: ${{ fromJSON(needs.prepare.outputs.versions) }}
     uses: ./.github/workflows/build-portable-r.yml
     with:
-      r_version: '4.3.0'
-      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
+      r_version: ${{ matrix.r_version }}
+      arch: ${{ inputs.arch }}
+      include_rtools: ${{ inputs.include_rtools }}
     permissions:
-      contents: write
-
-  build-4_3_1:
-    needs: build-4_3_0
-    uses: ./.github/workflows/build-portable-r.yml
-    with:
-      r_version: '4.3.1'
-      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
-    permissions:
-      contents: write
-
-  build-4_3_2:
-    needs: build-4_3_1
-    uses: ./.github/workflows/build-portable-r.yml
-    with:
-      r_version: '4.3.2'
-      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
-    permissions:
-      contents: write
-
-  build-4_3_3:
-    needs: build-4_3_2
-    uses: ./.github/workflows/build-portable-r.yml
-    with:
-      r_version: '4.3.3'
-      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
-    permissions:
-      contents: write
-
-  # ── R 4.4.x ─────────────────────────────────────────────────────────────
-
-  build-4_4_0:
-    needs: build-4_3_3
-    uses: ./.github/workflows/build-portable-r.yml
-    with:
-      r_version: '4.4.0'
-      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
-    permissions:
-      contents: write
-
-  build-4_4_1:
-    needs: build-4_4_0
-    uses: ./.github/workflows/build-portable-r.yml
-    with:
-      r_version: '4.4.1'
-      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
-    permissions:
-      contents: write
-
-  build-4_4_2:
-    needs: build-4_4_1
-    uses: ./.github/workflows/build-portable-r.yml
-    with:
-      r_version: '4.4.2'
-      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
-    permissions:
-      contents: write
-
-  build-4_4_3:
-    needs: build-4_4_2
-    uses: ./.github/workflows/build-portable-r.yml
-    with:
-      r_version: '4.4.3'
-      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
-    permissions:
-      contents: write
-
-  # ── R 4.5.x ─────────────────────────────────────────────────────────────
-
-  build-4_5_0:
-    needs: build-4_4_3
-    uses: ./.github/workflows/build-portable-r.yml
-    with:
-      r_version: '4.5.0'
-      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
-    permissions:
-      contents: write
-
-  build-4_5_1:
-    needs: build-4_5_0
-    uses: ./.github/workflows/build-portable-r.yml
-    with:
-      r_version: '4.5.1'
-      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
-    permissions:
-      contents: write
-
-  build-4_5_2:
-    needs: build-4_5_1
-    uses: ./.github/workflows/build-portable-r.yml
-    with:
-      r_version: '4.5.2'
-      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
-    permissions:
-      contents: write
-
-  build-4_5_3:
-    needs: build-4_5_2
-    uses: ./.github/workflows/build-portable-r.yml
-    with:
-      r_version: '4.5.3'
-      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
-    permissions:
-      contents: write
-
-  # ── R 4.6.x ─────────────────────────────────────────────────────────────
-
-  build-4_6_0:
-    needs: build-4_5_3
-    uses: ./.github/workflows/build-portable-r.yml
-    with:
-      r_version: '4.6.0'
-      include_rtools: ${{ github.event.inputs.include_rtools == 'true' }}
-    permissions:
-      contents: write
+      contents: write       # the called release and update-readme jobs push to the repo
