@@ -16,6 +16,7 @@ on:
 concurrency:
   group: build-rtools
   cancel-in-progress: false
+  queue: max  # keep every pending run (default keeps one and cancels the rest)
 
 jobs:
   prepare:
@@ -24,11 +25,17 @@ jobs:
       rtools_version: ${{ github.event.inputs.rtools_version }}
       matrix: ${{ steps.resolve.outputs.matrix }}
     steps:
+      - uses: actions/checkout@v7
+
       - id: resolve
         run: |
           RT="${{ github.event.inputs.rtools_version }}"
-          # All Rtools versions support both x64 and aarch64
-          MATRIX='[{"arch":"x64","runner":"windows-latest"},{"arch":"aarch64","runner":"windows-11-arm"}]'
+          # aarch64 only when versions.json lists an aarch64 installer
+          MATRIX='[{"arch":"x64","runner":"windows-latest"}'
+          if jq -e --arg rt "$RT" '.rtools[$rt].aarch64.file' versions.json >/dev/null; then
+            MATRIX="${MATRIX},{\"arch\":\"aarch64\",\"runner\":\"windows-11-arm\"}"
+          fi
+          MATRIX="${MATRIX}]"
           echo "matrix={\"include\":$MATRIX}" >> $GITHUB_OUTPUT
           echo "Building Rtools$RT: $MATRIX"
 
@@ -65,17 +72,20 @@ jobs:
         run: |
           .\build.ps1 -RtoolsOnly -RtoolsVersion "${{ needs.prepare.outputs.rtools_version }}" -Architecture "${{ matrix.arch }}"
 
+      # Same .7z (LZMA2) archive as build.ps1 -RtoolsOnly: the toolchain is
+      # too large for a zip under GitHub's 2 GB release asset limit
       - name: Archive from cache
         if: steps.cache.outputs.cache-hit == 'true'
         shell: pwsh
         run: |
           $outputName = "portable-rtools${{ needs.prepare.outputs.rtools_version }}-win-${{ matrix.arch }}"
-          $zipFile = "${outputName}.zip"
-          if (Test-Path $zipFile) { Remove-Item $zipFile }
-          $null = & 7z a -tzip -mx=5 $zipFile $outputName 2>&1
-          $hash = (Get-FileHash -Algorithm SHA256 $zipFile).Hash.ToLower()
-          "${hash}  ${zipFile}" | Out-File -FilePath "${zipFile}.sha256" -Encoding ASCII
-          Write-Host "Archived from cache: $zipFile"
+          $archiveFile = "${outputName}.7z"
+          if (Test-Path $archiveFile) { Remove-Item $archiveFile }
+          $null = & 7z a -t7z -mx=7 -mmt=on $archiveFile $outputName 2>&1
+          if ($LASTEXITCODE -ge 2) { throw "7z failed with exit code $LASTEXITCODE" }
+          $hash = (Get-FileHash -Algorithm SHA256 $archiveFile).Hash.ToLower()
+          "${hash}  ${archiveFile}" | Out-File -FilePath "${archiveFile}.sha256" -Encoding ASCII
+          Write-Host "Archived from cache: $archiveFile"
 
       - name: Test portable Rtools
         shell: pwsh
@@ -87,8 +97,8 @@ jobs:
         with:
           name: portable-rtools${{ needs.prepare.outputs.rtools_version }}-win-${{ matrix.arch }}
           path: |
-            portable-rtools*-win-${{ matrix.arch }}.zip
-            portable-rtools*-win-${{ matrix.arch }}.zip.sha256
+            portable-rtools*-win-${{ matrix.arch }}.7z
+            portable-rtools*-win-${{ matrix.arch }}.7z.sha256
           if-no-files-found: error
 
   release:
@@ -112,13 +122,16 @@ jobs:
           path: artifacts/
 
       - name: Generate release body
+        env:
+          RT: ${{ needs.prepare.outputs.rtools_version }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          RT="${{ needs.prepare.outputs.rtools_version }}"
           HAS_ARM64=false
-          [ -f "artifacts/portable-rtools${RT}-win-aarch64.zip" ] && HAS_ARM64=true
+          [ -f "artifacts/portable-rtools${RT}-win-aarch64.7z" ] && HAS_ARM64=true
 
-          X64_SHA=$(cut -d' ' -f1 "artifacts/portable-rtools${RT}-win-x64.zip.sha256" 2>/dev/null || echo "n/a")
-          [ "$HAS_ARM64" = "true" ] && ARM_SHA=$(cut -d' ' -f1 "artifacts/portable-rtools${RT}-win-aarch64.zip.sha256" 2>/dev/null || echo "n/a")
+          X64_SHA=$(cut -d' ' -f1 "artifacts/portable-rtools${RT}-win-x64.7z.sha256" 2>/dev/null || echo "n/a")
+          ARM_SHA=$(cut -d' ' -f1 "artifacts/portable-rtools${RT}-win-aarch64.7z.sha256" 2>/dev/null || echo "n/a")
+          DL="https://github.com/${GH_REPO}/releases/download/rtools${RT}"
 
           {
             echo "## Portable Rtools${RT} for Windows"
@@ -128,20 +141,22 @@ jobs:
             echo "### Downloads"
             echo "| Architecture | File | SHA256 |"
             echo "|-------------|------|--------|"
-            echo "| Windows x64 | \`portable-rtools${RT}-win-x64.zip\` | \`${X64_SHA}\` |"
+            echo "| Windows x64 | \`portable-rtools${RT}-win-x64.7z\` | \`${X64_SHA}\` |"
             if [ "$HAS_ARM64" = "true" ]; then
-              echo "| Windows ARM64 | \`portable-rtools${RT}-win-aarch64.zip\` | \`${ARM_SHA}\` |"
+              echo "| Windows ARM64 | \`portable-rtools${RT}-win-aarch64.7z\` | \`${ARM_SHA}\` |"
             fi
             echo ""
             echo "### Quick Install"
+            echo ""
+            echo "\`.7z\`, requires [7-Zip](https://7-zip.org/) (\`winget install 7zip.7zip\`)"
             echo "\`\`\`powershell"
-            echo "Invoke-WebRequest -Uri \"https://github.com/portable-r/portable-rtools/releases/download/rtools${RT}/portable-rtools${RT}-win-x64.zip\" -OutFile rtools.zip"
-            echo "Expand-Archive rtools.zip -DestinationPath ."
+            echo "curl.exe -fSLO ${DL}/portable-rtools${RT}-win-x64.7z"
+            echo "& \"\$env:ProgramFiles\\7-Zip\\7z.exe\" x portable-rtools${RT}-win-x64.7z"
             echo "\`\`\`"
             echo ""
             echo "### Usage with R"
             echo ""
-            echo "Add the toolchain to R's PATH via \`Renviron.site\`:"
+            echo "Add the toolchain to R's PATH via \`Renviron.site\` (on ARM64 the toolchain directory is \`aarch64-w64-mingw32.static.posix\`):"
             echo "\`\`\`"
             echo "PATH=\"/path/to/portable-rtools${RT}-win-x64/x86_64-w64-mingw32.static.posix/bin;/path/to/portable-rtools${RT}-win-x64/usr/bin;\${PATH}\""
             echo "\`\`\`"
@@ -155,4 +170,15 @@ jobs:
           tag_name: rtools${{ needs.prepare.outputs.rtools_version }}
           name: Rtools${{ needs.prepare.outputs.rtools_version }}
           files: artifacts/*
+          fail_on_unmatched_files: true
           body_path: release-body.md
+          make_latest: false  # "Latest" stays on the newest R release
+
+  # Regenerate the README download tables once the release is published
+  update-readme:
+    needs: [prepare, release]
+    uses: ./.github/workflows/update-readme.yml
+    with:
+      tag: rtools${{ needs.prepare.outputs.rtools_version }}
+    permissions:
+      contents: write
