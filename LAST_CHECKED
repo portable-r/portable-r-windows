@@ -1,6 +1,7 @@
-2026-08-13T09:11:53Z
+2026-09-23T22:18:18Z
+Status: ok
 R x64: 4.3.0-4.6.1 (14 versions)
-R aarch64: 4.4.0-4.5.2 (7 versions)
+R aarch64: 4.4.0-4.6.1 (10 versions)
 Rtools43 x64: rtools43-5976-5975.exe
 Rtools43 aarch64: rtools43-aarch64-5958-5975.exe
 Rtools44 x64: rtools44-6459-6401.exe
