@@ -241,22 +241,31 @@ if ($LASTEXITCODE -eq 0) {
 
 Section "Binary package install"
 
-# Detect architecture from the directory name
+# Detect architecture and R version from the directory name
 $isAarch64 = $RDir -match "aarch64"
+$rVersion = if ($RDir -match "portable-r-(\d+\.\d+\.\d+)-win") { [version]$Matches[1] } else { $null }
 
-if ($isAarch64) {
-    Skip "Binary package install (no CRAN ARM64 binaries available)"
+# aarch64: CRAN has no binaries; R 4.6+ builds use r-universe clang-aarch64 binaries
+$aarch64Binaries = $isAarch64 -and $rVersion -and $rVersion -ge [version]"4.6.0"
+
+if ($isAarch64 -and -not $aarch64Binaries) {
+    Skip "Binary package install (no ARM64 binaries for R < 4.6)"
 } else {
 
-# Install jsonlite and use it in a single call
-$result = & $Rscript -e "install.packages('jsonlite', quiet=TRUE); library(jsonlite); stopifnot(grepl('test', toJSON(list(test=TRUE)))); cat('ok')" 2>&1
+if ($aarch64Binaries) {
+    # type='binary' errors if the clang-aarch64 package type was lost
+    $result = & $Rscript -e "stopifnot(grepl('r-universe', getOption('repos')[['CRAN']])); install.packages('jsonlite', type='binary', quiet=TRUE); library(jsonlite); stopifnot(grepl('test', toJSON(list(test=TRUE)))); cat('ok')" 2>&1
+} else {
+    # Install jsonlite and use it in a single call
+    $result = & $Rscript -e "install.packages('jsonlite', quiet=TRUE); library(jsonlite); stopifnot(grepl('test', toJSON(list(test=TRUE)))); cat('ok')" 2>&1
+}
 if ($result -match "ok") {
     Pass "install + load + use jsonlite (single call)"
 } else {
     Fail "jsonlite binary package"
 }
 
-} # end if not aarch64
+} # end binary package install
 
 # ── 9. Source package install ────��──────────────────────────��────────────────
 
