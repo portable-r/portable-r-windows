@@ -1,6 +1,6 @@
 # Portable R for Windows
 
-Portable, relocatable R distributions for Windows built from official CRAN binaries. No installation required. Extract and run.
+Portable, relocatable R distributions for Windows built from the R installers: CRAN's for x64, and the builds listed under [Available Versions](#available-versions) for ARM64. No installation required. Extract and run.
 
 An **R + Rtools** variant is also available, bundling the full [Rtools](https://cran.r-project.org/bin/windows/Rtools/) toolchain for compiling packages from source.
 
@@ -44,7 +44,28 @@ No registry changes, no system-wide modifications. Packages install to the local
 
 ## Available Versions
 
-ARM64 builds are available for R 4.4.0+, sourced from [R's experimental aarch64 builds](https://www.r-project.org/nosvn/winutf8/aarch64/R-4-signed/).
+ARM64 builds are available for R 4.4.0+:
+
+- **R 4.4.0 – 4.5.3**: [Tomáš Kalibera](#acknowledgements)'s aarch64 builds. Their original home, `r-project.org/nosvn/winutf8/aarch64/`, has been offline since August 2026, so the build fetches the same files from the [r-hub mirror](https://github.com/r-hub/R/releases) and checks each against a SHA256 pinned in `versions.json`. R 4.4.0 – 4.5.1 match archived copies of the originals byte for byte, 4.5.2 carries its original signature, and 4.5.3 is unsigned.
+- **R 4.6.0+**: community builds from [r-devel/windows-arm64](https://github.com/r-devel/windows-arm64/releases) (see [contributor.r-project.org/windows-arm64](https://contributor.r-project.org/windows-arm64/)), checked against the SHA256 GitHub publishes for each installer. These are unsigned and not endorsed or supported by R Core.
+
+### Packages on ARM64
+
+CRAN does not publish Windows ARM64 binary packages.
+
+- **R 4.6.0+**: binary packages come from [r-universe](https://r-universe.dev). `etc/Rprofile.site` sets `CRAN = "https://cran.r-universe.dev"` and `BIOC = "https://bioc-release.r-universe.dev"` (the r-devel installers' own default from R 4.6.1 on), and R fetches binaries from:
+  - `https://cran.r-universe.dev/bin/windows/clang-aarch64/contrib/4.6/`
+  - `https://bioc-release.r-universe.dev/bin/windows/clang-aarch64/contrib/4.6/`
+
+  The `contrib/` directory follows the R version (R-devel uses `contrib/4.7/`). `bioc-release.r-universe.dev` serves the Bioconductor release for your R; `bioc.r-universe.dev` serves Bioconductor devel. If you change `options(repos)`, restore them with:
+
+  ```r
+  options(repos = c(CRAN = "https://cran.r-universe.dev",
+                    BIOC = "https://bioc-release.r-universe.dev"))
+  ```
+
+  `Rscript --vanilla` skips `etc/Renviron.site` and `etc/Rprofile.site`, which hold the binary package type, these repositories and (in the + Rtools variant) the Rtools location. Under `--vanilla`, set `repos` yourself and expect source installs.
+- **R 4.4.x – 4.5.x**: no binary packages exist. Packages install from CRAN source, so use the ARM64 + Rtools variant for any package that needs compilation.
 
 <!-- BEGIN RELEASES -->
 
@@ -90,7 +111,7 @@ R for Windows is already designed to be relocatable (`Rscript.exe` finds `R_HOME
 1. Run the R `.exe` installer silently to a custom directory (no system changes)
 2. Clean up installer artifacts (uninstaller, registry entries, Start Menu shortcuts)
 3. Set `.libPaths(.Library)` in `etc/Rprofile.site` so packages install locally
-4. Configure default CRAN mirror
+4. Configure default package repositories (CRAN mirror; r-universe for ARM64 R 4.6+)
 
 The R + Rtools variant additionally extracts the Rtools installer into a `rtools{VER}/` subdirectory and configures `etc/Renviron.site` to prepend the bundled toolchain to `PATH` using `${R_HOME}`, so `gcc`, `make`, and source package compilation work without any system changes. Each R series maps to a specific Rtools version (R 4.5.x uses Rtools45, R 4.4.x uses Rtools44, R 4.3.x uses Rtools43).
 
@@ -117,16 +138,16 @@ A test suite (`tests/run-tests.ps1`) validates the build across directory struct
 
 ### Version management
 
-`versions.json` is the single source of truth for supported R versions, Rtools versions, and installer URLs. `check-updates.sh` scrapes CRAN daily to detect new releases. `generate-readme.sh` updates the version tables in this README from GitHub releases.
+`versions.json` is the single source of truth for supported R versions, Rtools versions, installer URLs, and installer SHA256 pins; the build scripts, workflows and `Makefile` all read their version lists from it. `check-updates.sh` checks CRAN and the r-devel/windows-arm64 GitHub releases daily to detect new releases. `generate-readme.sh` updates the version tables in this README from GitHub releases.
 
 ### CI / GitHub Actions
 
 Four workflows are available, triggered manually via `workflow_dispatch`:
 
-- **Build Portable R** (`build-portable-r.yml`): Builds a single R version for x64 and ARM64 (when available). Optional `include_rtools` checkbox builds the R + Rtools variant alongside. After the release is published, regenerates the README download table so it always reflects the latest release on GitHub.
-- **Build Portable Rtools** (`build-rtools.yml`): Builds standalone Rtools for a given version.
-- **Build All R Versions** (`build-all-versions.yml`): Builds all supported versions with optional `include_rtools`.
-- **Check for Updates** (`check-updates.yml`): Runs daily to detect new R and Rtools releases. Updates `versions.json`, regenerates this README, and triggers builds for new versions.
+- **Build Portable R** (`build-portable-r.yml`): Builds a single R version for x64 and ARM64 (when available). The `arch` input (`all`, `x64` or `aarch64`) builds one architecture alone and leaves the other architecture's published files untouched, e.g. to add ARM64 to an existing release. Optional `include_rtools` checkbox builds the R + Rtools variant alongside, and `full_only` builds just that variant (used for Rtools updates, so the published R-only zip is left as it is). After the release is published, regenerates the README download table (`update-readme.yml`) so it always reflects the latest release on GitHub.
+- **Build Portable Rtools** (`build-rtools.yml`): Builds standalone Rtools (`.7z`) for a given version.
+- **Build All R Versions** (`build-all-versions.yml`): Builds every version `versions.json` lists (or the ones given in `versions`), one at a time, with the same `arch` and `include_rtools` options.
+- **Check for Updates** (`check-updates.yml`): Runs daily to detect new R and Rtools releases. Updates `versions.json`, regenerates this README, and triggers builds for just the new versions and architectures (`trigger-builds.sh`). An unreachable upstream source is reported (the run fails at the end) without blocking the other checks, and `LAST_CHECKED` is committed every day.
 
 ## Related
 
