@@ -88,7 +88,7 @@ CRAN does not publish Windows ARM64 binary packages.
 | 4.3.1 | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.3.1/portable-r-4.3.1-win-x64.zip) (94 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.3.1/portable-r-4.3.1-win-x64-full.7z) (793 MB) |  |  |
 | 4.3.0 | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.3.0/portable-r-4.3.0-win-x64.zip) (94 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.3.0/portable-r-4.3.0-win-x64-full.7z) (793 MB) |  |  |
 
-<sub>Last update check: 2026-09-24 · Last release built: 2026-09-23 (R 4.6.1)</sub>
+<sub>Last update check: 2026-09-25 · Last release built: 2026-09-23 (R 4.6.1)</sub>
 
 <!-- END RELEASES -->
 
