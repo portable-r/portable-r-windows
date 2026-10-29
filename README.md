@@ -73,6 +73,7 @@ CRAN does not publish Windows ARM64 binary packages.
 
 | R Version | x64 | x64 + Rtools | ARM64 | ARM64 + Rtools |
 |-----------|-----|-------------|-------|----------------|
+| 4.6.2 |  |  | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.6.2/portable-r-4.6.2-win-aarch64.zip) (99 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.6.2/portable-r-4.6.2-win-aarch64-full.7z) (874 MB) |
 | 4.6.1 | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.6.1/portable-r-4.6.1-win-x64.zip) (104 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.6.1/portable-r-4.6.1-win-x64-full.7z) (859 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.6.1/portable-r-4.6.1-win-aarch64.zip) (99 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.6.1/portable-r-4.6.1-win-aarch64-full.7z) (874 MB) |
 | 4.6.0 | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.6.0/portable-r-4.6.0-win-x64.zip) (104 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.6.0/portable-r-4.6.0-win-x64-full.7z) (859 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.6.0/portable-r-4.6.0-win-aarch64.zip) (99 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.6.0/portable-r-4.6.0-win-aarch64-full.7z) (874 MB) |
 | 4.5.3 | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.5.3/portable-r-4.5.3-win-x64.zip) (103 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.5.3/portable-r-4.5.3-win-x64-full.7z) (858 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.5.3/portable-r-4.5.3-win-aarch64.zip) (98 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.5.3/portable-r-4.5.3-win-aarch64-full.7z) (873 MB) |
@@ -88,7 +89,7 @@ CRAN does not publish Windows ARM64 binary packages.
 | 4.3.1 | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.3.1/portable-r-4.3.1-win-x64.zip) (94 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.3.1/portable-r-4.3.1-win-x64-full.7z) (793 MB) |  |  |
 | 4.3.0 | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.3.0/portable-r-4.3.0-win-x64.zip) (94 MB) | [download](https://github.com/portable-r/portable-r-windows/releases/download/v4.3.0/portable-r-4.3.0-win-x64-full.7z) (793 MB) |  |  |
 
-<sub>Last update check: 2026-10-29 · Last release built: 2026-09-23 (R 4.6.1)</sub>
+<sub>Last update check: 2026-10-29 · Last release built: 2026-10-29 (R 4.6.2)</sub>
 
 <!-- END RELEASES -->
 
@@ -124,7 +125,7 @@ The R + Rtools variant additionally extracts the Rtools installer into a `rtools
 ```powershell
 .\build.ps1 -RVersion "4.6.1"                            # R only (x64)
 .\build.ps1 -RVersion "4.6.1" -IncludeRtools             # R + Rtools
-.\build.ps1 -RVersion "4.6.1" -Architecture "aarch64"    # ARM64
+.\build.ps1 -RVersion "4.6.2" -Architecture "aarch64"    # ARM64
 .\build.ps1 -RtoolsOnly -RtoolsVersion "45"              # Rtools standalone
 .\build.ps1 -Help                                        # Show all options
 ```
